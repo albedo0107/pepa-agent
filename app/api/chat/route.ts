@@ -36,9 +36,29 @@ async function runSQL(query: string): Promise<string> {
 }
 
 const TODAY = new Date().toLocaleDateString("cs-CZ", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+const DRIVE_FOLDER = "https://drive.google.com/drive/folders/1jxnWBwCu0ik18D5sAFy4bE0t7q0aSUtZ";
+const DRIVE_FILES: Record<string, string> = {
+  "nove_leady.csv": "17kU39gMHZq5JD5ieFEiAL9o1kQD2cal3",
+};
 const TODAY_ISO = new Date().toISOString().split("T")[0];
 
-const SYSTEM_PROMPT = `Jsi Pepa, AI back office agent realitní firmy. Vždy odpovídej POUZE v češtině. Nikdy nepoužívej jiné jazyky ani písma.
+// Dynamicky přidej soubory z Drive při každém spuštění
+async function getDriveFiles(): Promise<string> {
+  try {
+    const html = await fetch(DRIVE_FOLDER, { headers: { "User-Agent": "Mozilla/5.0" } }).then(r => r.text());
+    const files: string[] = [];
+    const matches = html.matchAll(/"([a-zA-Z0-9_-]{25,})".*?"([^"]+\.(csv|docx|xlsx|pdf|txt))"/g);
+    for (const m of matches) {
+      files.push(`- ${m[2]} (ID: ${m[1]}) — https://drive.google.com/uc?export=download&id=${m[1]}`);
+      DRIVE_FILES[m[2]] = m[1];
+    }
+    return files.length > 0 ? files.join("\n") : Object.entries(DRIVE_FILES).map(([n, id]) => `- ${n} (ID: ${id})`).join("\n");
+  } catch {
+    return Object.entries(DRIVE_FILES).map(([n, id]) => `- ${n} (ID: ${id}) — https://drive.google.com/uc?export=download&id=${id}`).join("\n");
+  }
+}
+
+const SYSTEM_PROMPT_BASE = `Jsi Pepa, AI back office agent realitní firmy. Vždy odpovídej POUZE v češtině. Nikdy nepoužívej jiné jazyky ani písma.
 Dnešní datum: ${TODAY} (${TODAY_ISO})
 Příští týden: ${new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0]} – ${new Date(Date.now() + 11 * 86400000).toISOString().split("T")[0]}
 DŮLEŽITÉ:
@@ -52,7 +72,12 @@ DB tabulky:
 - nemovitosti (id, nazev, adresa, lokalita, typ, dispozice, cena_kc, stav, plocha_m2, rok_vystavby, rekonstrukce_rok, rekonstrukce_popis, stavebni_upravy)
 - leady (id, jmeno, email, zdroj, datum, nemovitost_id, stav)
 - prodeje (id, nemovitost_id, klient_id, datum_prodeje, cena_prodeje, provize_kc)
-- kalendar (id, datum, cas_od, cas_do, typ, popis, obsazeno)`;
+- kalendar (id, datum, cas_od, cas_do, typ, popis, obsazeno)
+
+Google Drive firemní složka: ${DRIVE_FOLDER}
+Soubory v Drive:
+${Object.entries(DRIVE_FILES).map(([n, id]) => `- ${n}: https://drive.google.com/uc?export=download&id=${id}`).join("\n")}
+Při čtení Drive souborů VŽDY použij read_drive_document tool s příslušnou URL.`;
 
 const tools: Anthropic.Tool[] = [
   {
@@ -232,7 +257,7 @@ export async function POST(req: NextRequest) {
         const streamResp = client.messages.stream({
           model: "claude-sonnet-4-5",
           max_tokens: 4096,
-          system: SYSTEM_PROMPT,
+          system: SYSTEM_PROMPT_BASE,
           tools,
           messages,
           // Po 2. iteraci zakáž tools aby Claude odpověděl textem
