@@ -5,9 +5,9 @@ const sql = neon(process.env.DATABASE_URL!);
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params;
+  const { id } = await params;
 
   const rows = await sql`
     SELECT id, message, response, status FROM chat_messages WHERE id = ${id}
