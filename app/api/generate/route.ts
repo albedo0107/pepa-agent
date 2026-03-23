@@ -120,17 +120,21 @@ export async function POST(req: NextRequest) {
     const rows = data?.rows || [];
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
     <style>
-      body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; color: #1e293b; max-width: 900px; margin: 0 auto; }
-      h1 { color: #3b82f6; border-bottom: 3px solid #3b82f6; padding-bottom: 10px; }
-      h2 { color: #1e40af; margin-top: 24px; }
-      ul { line-height: 1.8; }
-      table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-      th { background: #3b82f6; color: white; padding: 10px; text-align: left; }
-      td { border: 1px solid #e2e8f0; padding: 8px; }
+      @page { margin: 20mm; }
+      body { font-family: 'Segoe UI', Arial, sans-serif; padding: 20px; color: #1e293b; max-width: 900px; margin: 0 auto; }
+      h1 { color: #3b82f6; border-bottom: 3px solid #3b82f6; padding-bottom: 10px; font-size: 24px; }
+      h2 { color: #1e40af; margin-top: 24px; font-size: 18px; }
+      ul, ol { line-height: 2; }
+      table { border-collapse: collapse; width: 100%; margin-top: 20px; font-size: 12px; }
+      th { background: #3b82f6; color: white; padding: 8px; text-align: left; }
+      td { border: 1px solid #e2e8f0; padding: 6px; }
       tr:nth-child(even) td { background: #f8fafc; }
-      .meta { color: #94a3b8; font-size: 13px; margin-bottom: 20px; }
+      .meta { color: #94a3b8; font-size: 12px; margin-bottom: 20px; }
+      .print-btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-bottom: 20px; }
+      @media print { .print-btn { display: none; } }
     </style>
     </head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Tisknout / Uložit jako PDF</button>
     <h1>${title}</h1>
     <div class="meta">Vygenerováno: ${new Date().toLocaleDateString("cs-CZ")} | Pepa — Back Office Agent</div>
     <div>${content.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/^## (.*)/gm, "<h2>$1</h2>").replace(/^- (.*)/gm, "<li>$1</li>").replace(/\n/g, "<br>")}</div>
@@ -140,7 +144,7 @@ export async function POST(req: NextRequest) {
     return new NextResponse(html, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(title)}.html"`,
+        "Content-Disposition": `inline; filename="${encodeURIComponent(title)}.html"`,
       },
     });
   }

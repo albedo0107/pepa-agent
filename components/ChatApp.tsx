@@ -307,14 +307,19 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
                           });
                           const blob = await res.blob();
                           const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = `${msg.document!.title}.${msg.document!.format}`;
-                          a.click();
+                          const fmt = msg.document!.format;
+                          if (fmt === "pdf") {
+                            window.open(url, "_blank");
+                          } else {
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `${msg.document!.title}.${fmt}`;
+                            a.click();
+                          }
                         }}
                         className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-2 rounded-lg transition-colors"
                       >
-                        📄 Stáhnout {msg.document.format.toUpperCase()} — {msg.document.title}
+                        📄 {msg.document.format === "pdf" ? "Otevřít" : "Stáhnout"} {msg.document.format.toUpperCase()} — {msg.document.title}
                       </a>
                     </div>
                   )}

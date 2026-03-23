@@ -124,7 +124,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "create_document",
-    description: "Vytvoří dokument (PDF, Word nebo PowerPoint) ke stažení. Pro PPTX použij `slides` pole pro více slidů.",
+    description: "Vytvoří dokument ke stažení. Formáty: 'docx' (Word, ideální pro reporty a přehledy), 'pptx' (prezentace, použij slides pole), 'pdf' (HTML report). Pro datové přehledy a reporty VŽDY používej 'docx'.",
     input_schema: {
       type: "object" as const,
       properties: {
