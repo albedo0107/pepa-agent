@@ -286,22 +286,20 @@ export async function POST(req: NextRequest) {
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Graf zobrazen." });
               } else if (tool.name === "read_drive_document") {
                 try {
-                  let url = parsed.file_url;
-                  // Konvertuj Google Docs/Sheets na export URL
-                  if (url.includes("docs.google.com/document")) {
-                    const id = url.match(/\/d\/([^/]+)/)?.[1];
-                    if (id) url = `https://docs.google.com/document/d/${id}/export?format=txt`;
-                  } else if (url.includes("docs.google.com/spreadsheets")) {
-                    const id = url.match(/\/d\/([^/]+)/)?.[1];
-                    if (id) url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`;
-                  } else if (url.includes("drive.google.com/file/d")) {
-                    const id = url.match(/\/d\/([^/]+)/)?.[1];
-                    if (id) url = `https://drive.google.com/uc?export=download&id=${id}`;
+                  const baseUrl = process.env.VERCEL_URL
+                    ? `https://${process.env.VERCEL_URL}`
+                    : "http://localhost:3000";
+                  const res = await fetch(`${baseUrl}/api/drive/read`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ file_url: parsed.file_url }),
+                  });
+                  const data = await res.json();
+                  if (data.ok) {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Dokument přečten (${data.type}, ${data.pages || 1} stran):\n\n${data.text}` });
+                  } else {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${data.error}` });
                   }
-                  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-                  const content = await res.text();
-                  const truncated = content.slice(0, 8000);
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Obsah dokumentu:\n${truncated}` });
                 } catch (e) {
                   toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba při čtení: ${e}` });
                 }
