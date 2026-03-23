@@ -134,30 +134,63 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
         }),
       });
 
-      // Přečti celou odpověď najednou — žádný streaming, žádné race conditions
-      const text = await res.text();
-      const lines = text.split("\n");
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
       let fullText = "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
-        if (!data || data === "[DONE]") continue;
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.text) fullText += parsed.text;
-          else if (parsed.chart) localExtras = { ...localExtras, chart: parsed.chart };
-          else if (parsed.document) localExtras = { ...localExtras, document: parsed.document };
-          else if (parsed.calendarEvent) localExtras = { ...localExtras, calendarEvent: parsed.calendarEvent };
-          else if (parsed.gmailDraft) localExtras = { ...localExtras, gmailDraft: parsed.gmailDraft };
-          else if (parsed.calendarUpdate) onCalendarUpdate?.();
-        } catch {}
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (!data) continue;
+          if (data === "[DONE]") {
+            // Aplikuj extras na konci
+            setMessages((prev) => prev.map((m, i) =>
+              i === prev.length - 1
+                ? { ...m, loading: false, content: fullText, indicator: undefined, ...localExtras }
+                : m
+            ));
+            break;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.text) {
+              fullText += parsed.text;
+              // Průběžný streaming update
+              setMessages((prev) => prev.map((m, i) =>
+                i === prev.length - 1
+                  ? { ...m, loading: false, content: fullText, indicator: undefined }
+                  : m
+              ));
+            } else if (parsed.chart) localExtras = { ...localExtras, chart: parsed.chart };
+            else if (parsed.document) localExtras = { ...localExtras, document: parsed.document };
+            else if (parsed.calendarEvent) localExtras = { ...localExtras, calendarEvent: parsed.calendarEvent };
+            else if (parsed.gmailDraft) localExtras = { ...localExtras, gmailDraft: parsed.gmailDraft };
+            else if (parsed.calendarUpdate) onCalendarUpdate?.();
+            else if (parsed.indicator) {
+              setMessages((prev) => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, indicator: parsed.indicator } : m
+              ));
+            }
+          } catch {}
+        }
       }
-      // Jediný update — text + extras najednou
-      setMessages((prev) => prev.map((m, i) =>
-        i === prev.length - 1
-          ? { ...m, loading: false, content: fullText, indicator: undefined, ...localExtras }
-          : m
-      ));
+
+      // Fallback — aplikuj extras pokud [DONE] nepřišlo
+      if (Object.keys(localExtras).length > 0) {
+        setMessages((prev) => prev.map((m, i) =>
+          i === prev.length - 1
+            ? { ...m, loading: false, ...localExtras }
+            : m
+        ));
+      }
 
     } catch (e: unknown) {
       const isAbort = e instanceof Error && e.name === "AbortError";
