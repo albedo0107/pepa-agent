@@ -66,6 +66,17 @@ DŮLEŽITÉ:
 - Nikdy neopakuj "Perfektní!", "Výborně!" apod. před každou akcí. Jen jednou na začátku max.
 - Když najdeš volný termín v kalendáři, VŽDY ihned zavolej open_calendar_event tool.
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
+- Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
+
+LEAD SCORING pravidla:
+- Zdroj "doporučení" = +30 bodů (nejvyšší konverze)
+- Zdroj "web" = +20 bodů
+- Zdroj "sreality/bezrealitky" = +10 bodů
+- Budget nad 10M = +20 bodů
+- Zájem o konkrétní nemovitost = +15 bodů
+- Priorita vysoká (skóre 75-100): "Zavolat do 2 hodin"
+- Priorita střední (50-74): "Kontaktovat do 24 hodin"
+- Priorita nízká (0-49): "Sledovat, email do týdne"
 
 DB tabulky:
 - klienti (id, jmeno, email, telefon, zdroj, datum_akvizice)
@@ -87,6 +98,21 @@ const tools: Anthropic.Tool[] = [
       type: "object" as const,
       properties: { query: { type: "string" } },
       required: ["query"],
+    },
+  },
+  {
+    name: "score_lead",
+    description: "Vyhodnotí a ohodnotí lead skórem 0-100 a uloží do DB. Volej vždy při přidání nebo importu nového leadu.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        lead_id: { type: "number", description: "ID leadu v databázi" },
+        skore: { type: "number", description: "Skóre 0-100 (100 = nejhorší lead)" },
+        priorita: { type: "string", enum: ["vysoká", "střední", "nízká"], description: "Priorita leadu" },
+        doporucena_akce: { type: "string", description: "Konkrétní doporučená akce, např. 'Zavolat do 2 hodin'" },
+        zduvodneni: { type: "string", description: "Krátké zdůvodnění skóre" },
+      },
+      required: ["lead_id", "skore", "priorita", "doporucena_akce"],
     },
   },
   {
@@ -309,6 +335,11 @@ export async function POST(req: NextRequest) {
               } else if (tool.name === "create_chart") {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chart: parsed })}\n\n`));
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Graf zobrazen." });
+              } else if (tool.name === "score_lead") {
+                const { lead_id, skore, priorita, doporucena_akce, zduvodneni } = parsed;
+                const result = await runSQL(`UPDATE leady SET skore=${skore}, priorita='${priorita}', doporucena_akce='${doporucena_akce}' WHERE id=${lead_id} RETURNING id, jmeno, skore, priorita, doporucena_akce`);
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ leadScore: { lead_id, skore, priorita, doporucena_akce, zduvodneni } })}\n\n`));
+                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Lead #${lead_id} ohodnocen: ${skore}/100, ${priorita} priorita. ${result}` });
               } else if (tool.name === "read_drive_document") {
                 try {
                   const baseUrl = process.env.VERCEL_URL

@@ -25,6 +25,14 @@ type GmailDraft = {
   preview: string;
 };
 
+type LeadScore = {
+  lead_id: number;
+  skore: number;
+  priorita: string;
+  doporucena_akce: string;
+  zduvodneni?: string;
+};
+
 type CalendarEvent = {
   url: string;
   title: string;
@@ -43,6 +51,7 @@ type Message = {
   indicator?: string;
   gmailDraft?: GmailDraft;
   calendarEvent?: CalendarEvent;
+  leadScore?: LeadScore;
 };
 
 const WELCOME_MSG: Message = {
@@ -171,6 +180,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
               ));
             } else if (parsed.chart) localExtras = { ...localExtras, chart: parsed.chart };
             else if (parsed.document) localExtras = { ...localExtras, document: parsed.document };
+            else if (parsed.leadScore) localExtras = { ...localExtras, leadScore: parsed.leadScore };
             else if (parsed.calendarEvent) localExtras = { ...localExtras, calendarEvent: parsed.calendarEvent };
             else if (parsed.gmailDraft) localExtras = { ...localExtras, gmailDraft: parsed.gmailDraft };
             else if (parsed.calendarUpdate) onCalendarUpdate?.();
@@ -231,6 +241,24 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
           <button onClick={clearHistory} className="ml-auto text-xs text-gray-500 hover:text-gray-300 border border-gray-700 rounded px-2 py-0.5">Smazat</button>
         </div>
       )}
+      {!embedded && (
+        <div className="border-b border-gray-800 px-6 py-2 flex flex-wrap gap-2 overflow-x-auto">
+          {[
+            { icon: "📊", label: "Databáze & grafy" },
+            { icon: "📁", label: "Google Drive" },
+            { icon: "📅", label: "Google Calendar" },
+            { icon: "✉️", label: "Gmail draft" },
+            { icon: "📄", label: "PPTX / DOCX" },
+            { icon: "🔍", label: "Sreality monitoring" },
+            { icon: "💬", label: "Telegram sync" },
+            { icon: "🧠", label: "Trvalá paměť" },
+          ].map(cap => (
+            <span key={cap.label} className="flex items-center gap-1 text-xs bg-gray-800/60 border border-gray-700/50 rounded-full px-3 py-1 text-gray-400 whitespace-nowrap">
+              {cap.icon} {cap.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
@@ -254,6 +282,27 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
                     <span className="text-gray-400 text-xs italic animate-pulse">{msg.indicator}</span>
                   )}
                   {msg.content && <span dangerouslySetInnerHTML={{ __html: renderContent(msg.content) }} />}
+                  {msg.leadScore && (
+                    <div className="mt-2 rounded-lg border border-yellow-700/50 bg-yellow-900/10 p-3 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-yellow-400">🎯 Lead scoring</span>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                          msg.leadScore.priorita === "vysoká" ? "bg-red-600/80 text-white" :
+                          msg.leadScore.priorita === "střední" ? "bg-yellow-600/80 text-white" :
+                          "bg-green-700/80 text-white"
+                        }`}>
+                          {msg.leadScore.priorita === "vysoká" ? "🔴" : msg.leadScore.priorita === "střední" ? "🟡" : "🟢"} {msg.leadScore.priorita.toUpperCase()} PRIORITA
+                        </span>
+                        <span className="ml-auto text-lg font-bold text-white">{msg.leadScore.skore}<span className="text-xs text-gray-400">/100</span></span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-1.5">
+                        <div className={`h-1.5 rounded-full ${msg.leadScore.skore >= 75 ? "bg-red-500" : msg.leadScore.skore >= 50 ? "bg-yellow-500" : "bg-green-500"}`}
+                          style={{ width: `${msg.leadScore.skore}%` }} />
+                      </div>
+                      <div className="text-xs text-yellow-200 font-medium">⚡ {msg.leadScore.doporucena_akce}</div>
+                      {msg.leadScore.zduvodneni && <div className="text-xs text-gray-400 italic">{msg.leadScore.zduvodneni}</div>}
+                    </div>
+                  )}
                   {msg.calendarEvent && (
                     <div className="mt-2 rounded-lg border border-blue-700/50 bg-blue-900/10 p-3 space-y-2">
                       <div className="flex items-center gap-2 text-xs font-semibold text-blue-400">
