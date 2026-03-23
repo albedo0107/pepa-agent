@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { execSync } from "child_process";
+import { neon } from "@neondatabase/serverless";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-const DB = process.env.DATABASE_URL!;
+const sql = neon(process.env.DATABASE_URL!);
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
@@ -21,12 +21,15 @@ async function sendToTelegram(userMsg: string, assistantMsg: string) {
   }).catch(() => {});
 }
 
-function runSQL(query: string): string {
+async function runSQL(query: string): Promise<string> {
   try {
-    return execSync(
-      `/usr/local/opt/postgresql@18/bin/psql "${DB}" -t -A -c "${query.replace(/"/g, '\\"')}"`,
-      { timeout: 10000 }
-    ).toString().trim();
+    const rows = await sql.query(query) as Record<string, unknown>[];
+    if (!rows || rows.length === 0) return "Žádné výsledky";
+    const headers = Object.keys(rows[0]);
+    const lines = rows.map((r) =>
+      headers.map(h => String(r[h] ?? "")).join(" | ")
+    );
+    return [headers.join(" | "), ...lines].join("\n");
   } catch (e: unknown) {
     return `SQL error: ${e instanceof Error ? e.message : String(e)}`;
   }
@@ -250,7 +253,7 @@ export async function POST(req: NextRequest) {
             try {
               const parsed = JSON.parse(tool.input);
               if (tool.name === "sql_query") {
-                const sqlResult = runSQL(parsed.query);
+                const sqlResult = await runSQL(parsed.query);
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: sqlResult });
               } else if (tool.name === "create_chart") {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chart: parsed })}\n\n`));
@@ -275,7 +278,7 @@ export async function POST(req: NextRequest) {
               } else if (tool.name === "calendar_find_slot") {
                 const { from, to, duration_minutes = 60 } = parsed;
                 const toDate = to || new Date(new Date(from).getTime() + 5 * 86400000).toISOString().split("T")[0];
-                const slots = runSQL(`SELECT datum, cas_od, cas_do, obsazeno, popis, klient_jmeno, typ FROM kalendar WHERE datum >= '${from}' AND datum <= '${toDate}' ORDER BY datum, cas_od`);
+                const slots = await runSQL(`SELECT datum, cas_od, cas_do, obsazeno, popis, klient_jmeno, typ FROM kalendar WHERE datum >= '${from}' AND datum <= '${toDate}' ORDER BY datum, cas_od`);
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Kalendář ${from}–${toDate}:\n${slots}\n\nHledaná délka: ${duration_minutes} min. Volné sloty = obsazeno=false.` });
               } else if (tool.name === "calendar_add_event") {
                 const addResult = await fetch("http://localhost:3000/api/calendar", {
