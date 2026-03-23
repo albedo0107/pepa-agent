@@ -204,14 +204,16 @@ export async function POST(req: NextRequest) {
         { role: "user", content: message },
       ];
 
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 3; i++) {
         // Použij streaming pro finální odpověď
         const streamResp = client.messages.stream({
           model: "claude-sonnet-4-5",
-          max_tokens: 1024,
+          max_tokens: 4096,
           system: SYSTEM_PROMPT,
           tools,
           messages,
+          // Po 2. iteraci zakáž tools aby Claude odpověděl textem
+          ...(i >= 2 ? { tool_choice: { type: "none" as const } } : {}),
         });
 
         // Sbírej všechny tool calls během streamu
