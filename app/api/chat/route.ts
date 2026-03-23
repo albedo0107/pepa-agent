@@ -65,6 +65,29 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "read_drive_document",
+    description: "Přečte dokument z Google Drive složky (veřejně sdílený). Použij když uživatel chce přečíst, zpracovat nebo importovat dokument z Drive.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_url: { type: "string", description: "Přímý link na soubor (drive.google.com/file/d/ID nebo docs.google.com)" },
+        action: { type: "string", enum: ["read", "import_to_db"], description: "read = přečíst obsah, import_to_db = extrahovat data a uložit do DB" },
+      },
+      required: ["file_url"],
+    },
+  },
+  {
+    name: "list_drive_folder",
+    description: "Zobrazí seznam souborů ve sdílené Google Drive složce.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        folder_url: { type: "string", description: "Link na Google Drive složku" },
+      },
+      required: ["folder_url"],
+    },
+  },
+  {
     name: "open_calendar_event",
     description: "Otevře Google Calendar s předvyplněnou událostí k potvrzení. Použij vždy když přidáváš schůzku nebo událost do kalendáře.",
     input_schema: {
@@ -261,6 +284,38 @@ export async function POST(req: NextRequest) {
               } else if (tool.name === "create_chart") {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chart: parsed })}\n\n`));
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Graf zobrazen." });
+              } else if (tool.name === "read_drive_document") {
+                try {
+                  let url = parsed.file_url;
+                  // Konvertuj Google Docs/Sheets na export URL
+                  if (url.includes("docs.google.com/document")) {
+                    const id = url.match(/\/d\/([^/]+)/)?.[1];
+                    if (id) url = `https://docs.google.com/document/d/${id}/export?format=txt`;
+                  } else if (url.includes("docs.google.com/spreadsheets")) {
+                    const id = url.match(/\/d\/([^/]+)/)?.[1];
+                    if (id) url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`;
+                  } else if (url.includes("drive.google.com/file/d")) {
+                    const id = url.match(/\/d\/([^/]+)/)?.[1];
+                    if (id) url = `https://drive.google.com/uc?export=download&id=${id}`;
+                  }
+                  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+                  const content = await res.text();
+                  const truncated = content.slice(0, 8000);
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Obsah dokumentu:\n${truncated}` });
+                } catch (e) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba při čtení: ${e}` });
+                }
+              } else if (tool.name === "list_drive_folder") {
+                try {
+                  const res = await fetch(parsed.folder_url, { headers: { "User-Agent": "Mozilla/5.0" } });
+                  const html = await res.text();
+                  // Extrahuj jména souborů z Drive HTML
+                  const files = [...html.matchAll(/"([^"]+\.(pdf|docx|xlsx|txt|csv|doc))"/gi)].map(m => m[1]);
+                  const unique = [...new Set(files)].slice(0, 20);
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: unique.length > 0 ? `Soubory ve složce:\n${unique.join("\n")}` : "Složka je prázdná nebo nepřístupná. Nahraj soubory do složky a zkus znovu." });
+                } catch (e) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e}` });
+                }
               } else if (tool.name === "open_calendar_event") {
                 const { title, date, start_time, end_time, description: desc, location } = parsed;
                 const fmt = (d: string, t: string) => `${d.replace(/-/g, "")}T${t.replace(":", "")}00`;
