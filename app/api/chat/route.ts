@@ -64,7 +64,7 @@ Příští týden: ${new Date(Date.now() + 7 * 86400000).toISOString().split("T"
 DŮLEŽITÉ:
 - Volej sql_query MAX 1x na dotaz — zahrň vše do jednoho dotazu.
 - Nikdy neopakuj "Perfektní!", "Výborně!" apod. před každou akcí. Jen jednou na začátku max.
-- Máš PLNÝ přístup k Google Calendar uživatele. OAuth token je uložen v DB (tabulka oauth_tokens). Když chceš přidat událost, použij calendar_add_event — ten zapíše do DB i do Google Calendar přes /api/gcal/event endpoint. NIKDY nepoužívej open_calendar_event.
+- Máš PLNÝ přístup k Google Calendar uživatele přes OAuth. Když chceš přidat nebo smazat událost, VŽDY použij calendar_add_event nebo calendar_delete_event. Tyto tooly zapíší přímo do DB i Google Calendar bez jakéhokoli potvrzení od uživatele.
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
@@ -148,22 +148,6 @@ const tools: Anthropic.Tool[] = [
         folder_url: { type: "string", description: "Link na Google Drive složku" },
       },
       required: ["folder_url"],
-    },
-  },
-  {
-    name: "open_calendar_event",
-    description: "Otevře Google Calendar s předvyplněnou událostí k potvrzení. Použij vždy když přidáváš schůzku nebo událost do kalendáře.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        title: { type: "string", description: "Název události" },
-        date: { type: "string", description: "Datum (YYYY-MM-DD)" },
-        start_time: { type: "string", description: "Začátek (HH:MM)" },
-        end_time: { type: "string", description: "Konec (HH:MM)" },
-        description: { type: "string", description: "Popis události" },
-        location: { type: "string", description: "Místo (volitelné)" },
-      },
-      required: ["title", "date", "start_time", "end_time"],
     },
   },
   {
@@ -414,7 +398,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", calendar_delete_event: "🗑️ Mažu událost...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", calendar_delete_event: "🗑️ Mažu událost...", open_gmail_draft: "✉️ Připravuji email draft...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {
@@ -482,19 +466,6 @@ export async function POST(req: NextRequest) {
                 } catch (e) {
                   toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e}` });
                 }
-              } else if (tool.name === "open_calendar_event") {
-                const { title, date, start_time, end_time, description: desc, location } = parsed;
-                const fmt = (d: string, t: string) => `${d.replace(/-/g, "")}T${t.replace(":", "")}00`;
-                const params = new URLSearchParams({
-                  action: "TEMPLATE",
-                  text: title,
-                  dates: `${fmt(date, start_time)}/${fmt(date, end_time)}`,
-                  ...(desc ? { details: desc } : {}),
-                  ...(location ? { location } : {}),
-                });
-                const calUrl = `https://calendar.google.com/calendar/render?${params.toString()}`;
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarEvent: { url: calUrl, title, date, start_time, end_time, description: desc } })}\n\n`));
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Událost "${title}" připravena pro Google Calendar (${date} ${start_time}-${end_time}).` });
               } else if (tool.name === "open_gmail_draft") {
                 const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(parsed.to)}&su=${encodeURIComponent(parsed.subject)}&body=${encodeURIComponent(parsed.body)}`;
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ gmailDraft: { url: gmailUrl, to: parsed.to, subject: parsed.subject, preview: parsed.body.slice(0, 150) } })}\n\n`));
