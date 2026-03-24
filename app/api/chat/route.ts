@@ -19,9 +19,7 @@ export async function POST(req: NextRequest) {
             ).join("\n") + "\n\n"
           : "";
 
-        const fullMessage = historyText
-          ? `Kontext předchozí konverzace:\n${historyText}Uživatel: ${message}`
-          : message;
+        const fullMessage = `${historyText ? `Kontext předchozí konverzace:\n${historyText}` : ""}Uživatel: ${message}`;
 
         // Pošli do OpenClaw hooks
         const hookRes = await fetch(`${OPENCLAW_URL}/hooks/agent`, {
