@@ -8,8 +8,8 @@ async function getAccessToken(): Promise<string> {
   if (!rows.length) throw new Error("Google Calendar není připojen. Jdi na /api/gcal/auth");
 
   const token = rows[0];
-  // Obnov token pokud expiroval
-  if (!token.expires_at || new Date(token.expires_at) < new Date(Date.now() + 60000)) {
+  // Vždy obnov token (serverless — každé volání je nová instance)
+  if (true || !token.expires_at || new Date(token.expires_at) < new Date(Date.now() + 60000)) {
     const res = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
