@@ -66,7 +66,7 @@ Příští týden: ${new Date(Date.now() + 7 * 86400000).toISOString().split("T"
 DŮLEŽITÉ:
 - Volej sql_query MAX 1x na dotaz — zahrň vše do jednoho dotazu.
 - Nikdy neopakuj "Perfektní!", "Výborně!" apod. před každou akcí. Jen jednou na začátku max.
-- Máš PLNÝ přístup k Google Calendar uživatele přes OAuth. Když chceš přidat nebo smazat událost, VŽDY použij calendar_add_event nebo calendar_delete_event. Tyto tooly zapíší přímo do DB i Google Calendar bez jakéhokoli potvrzení od uživatele.
+- Máš PLNÝ přístup k Google Calendar uživatele přes OAuth. Použij calendar_add_event pro přidání a calendar_delete_event pro mazání. Píšeš PŘÍMO do Google Calendar — žádná DB, žádné potvrzení. Pro čtení kalendáře použij sql_query na tabulku kalendar NEBO se zeptej uživatele na datum.
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
@@ -534,45 +534,58 @@ export async function POST(req: NextRequest) {
               } else if (tool.name === "calendar_delete_event") {
                 const { id, gcal_event_id } = parsed;
                 // Smaž z DB
-                await sql`DELETE FROM kalendar WHERE id = ${id}`;
-                // Smaž z Google Calendar
-                let gcalDelMsg = "";
+                // Smaž z Google Calendar přímo
                 try {
-                  const calBase = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-                  // Získej gcal_event_id z DB pokud není předán
-                  let eventId = gcal_event_id;
-                  if (!eventId) {
-                    const rows = await sql`SELECT gcal_event_id FROM kalendar WHERE id = ${id}`;
-                    eventId = rows[0]?.gcal_event_id;
-                  }
-                  if (eventId) {
-                    await fetch(`${calBase}/api/gcal/event?id=${encodeURIComponent(eventId)}`, { method: "DELETE" });
-                    gcalDelMsg = " | 🗑️ Smazáno i z Google Calendar";
-                  }
-                } catch { /* tiché selhání */ }
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Událost ID ${id} smazána z DB${gcalDelMsg}.` });
+                  const rows = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
+                  if (!rows.length) throw new Error("Google Calendar není připojen");
+                  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: new URLSearchParams({ refresh_token: rows[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
+                  }).then(r => r.json());
+                  const eventId = gcal_event_id || id;
+                  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(eventId))}`, {
+                    method: "DELETE", headers: { "Authorization": `Bearer ${tokenRes.access_token}` },
+                  });
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `✅ Událost smazána z Google Calendar.` });
+                } catch (e: unknown) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba mazání: ${e instanceof Error ? e.message : String(e)}` });
+                }
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
               } else if (tool.name === "calendar_add_event") {
-                const calBase = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-                const addResult = await fetch(`${calBase}/api/calendar`, {
-                  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
-                }).then(r => r.json()).catch(() => ({ error: "Chyba" }));
-                // Zároveň zapsat do Google Calendar
-                let gcalMsg = "";
+                // Zapisuje POUZE do Google Calendar
                 try {
-                  const gcalResult = await fetch(`${calBase}/api/gcal/event`, {
-                    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
+                  const GCAL_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
+                  const GCAL_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
+                  const rows = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
+                  if (!rows.length) throw new Error("Google Calendar není připojen");
+                  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: new URLSearchParams({ refresh_token: rows[0].refresh_token, client_id: GCAL_CLIENT_ID, client_secret: GCAL_CLIENT_SECRET, grant_type: "refresh_token" }),
                   }).then(r => r.json());
-                  if (gcalResult.ok) {
-                    gcalMsg = ` | 📅 Přidáno i do Google Calendar`;
-                    // Ulož gcal event ID do DB
-                    if (addResult.id && gcalResult.id) {
-                      await sql`UPDATE kalendar SET gcal_event_id = ${gcalResult.id} WHERE id = ${addResult.id}`;
-                    }
+                  const accessToken = tokenRes.access_token;
+                  const start = new Date(`${parsed.datum}T${parsed.cas_od}:00+01:00`).toISOString();
+                  const end = new Date(`${parsed.datum}T${parsed.cas_do}:00+01:00`).toISOString();
+                  const gcalRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      summary: parsed.popis,
+                      description: parsed.klient_jmeno ? `Klient: ${parsed.klient_jmeno}` : undefined,
+                      location: parsed.mistnost || undefined,
+                      start: { dateTime: start, timeZone: "Europe/Prague" },
+                      end: { dateTime: end, timeZone: "Europe/Prague" },
+                    }),
+                  }).then(r => r.json());
+                  if (gcalRes.id) {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `✅ Schůzka "${parsed.popis}" přidána do Google Calendar: ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}` });
+                  } else {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba Google Calendar: ${gcalRes.error?.message || JSON.stringify(gcalRes)}` });
                   }
-                } catch { /* Google Calendar nemusí být připojen */ }
-                const msg = addResult.error ? `Chyba: ${addResult.error}` : `Schůzka přidána! ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}: "${parsed.popis}"${gcalMsg}`;
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: msg });
+                } catch (e: unknown) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e instanceof Error ? e.message : String(e)}` });
+                }
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
               } else if (tool.name === "add_dashboard_note") {
                 const { nadpis, obsah, typ = "info", zdroj } = parsed;
