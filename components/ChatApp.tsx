@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, DragEvent } from "react";
 import dynamic from "next/dynamic";
 const ChartRenderer = dynamic(() => import("./ChartRenderer"), { ssr: false });
 
@@ -91,6 +91,9 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -142,6 +145,36 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
+
+  const uploadFile = useCallback(async (file: File) => {
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const { url, name, size } = await res.json();
+      const sizeFmt = size > 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.round(size / 1024)} KB`;
+      await sendMessage(`Nahrál jsem soubor: **${name}** (${sizeFmt})\nURL: ${url}\n\nMůžeš tento soubor zpracovat?`);
+    } catch {
+      setMessages(prev => [...prev, { role: "assistant", content: "❌ Chyba při nahrávání souboru." }]);
+    } finally {
+      setUploading(false);
+    }
+  }, []);  // eslint-disable-line
+
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) uploadFile(file);
+  }, [uploadFile]);
+
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback(() => setDragOver(false), []);
 
   const clearHistory = useCallback(() => {
     setMessages([WELCOME_MSG]);
@@ -252,7 +285,18 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
   };
 
   return (
-    <div className={`flex flex-col ${embedded ? "h-full" : "h-screen"} text-gray-100 relative`} style={{ background: embedded ? "transparent" : "linear-gradient(135deg, #0f1a1c 0%, #0d1f2d 100%)" }} suppressHydrationWarning>
+    <div className={`flex flex-col ${embedded ? "h-full" : "h-screen"} text-gray-100 relative`} style={{ background: embedded ? "transparent" : "linear-gradient(135deg, #0f1a1c 0%, #0d1f2d 100%)" }} suppressHydrationWarning
+      onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave}>
+      {/* Drag overlay */}
+      {dragOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-blue-900/70 border-2 border-dashed border-blue-400 rounded-xl pointer-events-none">
+          <div className="text-center">
+            <div className="text-5xl mb-3">📂</div>
+            <div className="text-blue-200 font-semibold text-lg">Pusť soubor pro nahrání</div>
+            <div className="text-blue-300 text-sm">Uloží se do Pepa Files</div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       {!embedded && <header className="border-b border-gray-800 px-6 py-4 flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-xl font-bold">P</div>
@@ -443,11 +487,17 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
 
       {/* Input */}
       <div className="border-t border-gray-800 px-4 py-4">
-        <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-3">
+        <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(f); e.target.value = ""; }} />
+        <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2">
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-gray-300 rounded-xl px-3 py-3 text-sm transition-colors flex-shrink-0"
+            title="Nahrát soubor">
+            {uploading ? "⏳" : "📎"}
+          </button>
           <input
             type="text" value={input} onChange={(e) => setInput(e.target.value)}
-            placeholder="Zeptejte se Pepy na data, klienty, nemovitosti..."
-            disabled={loading}
+            placeholder="Zeptejte se Pepy nebo přetáhněte soubor..."
+            disabled={loading || uploading}
             className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50 placeholder-gray-500"
           />
           {loading ? (
