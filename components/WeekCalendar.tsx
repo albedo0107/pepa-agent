@@ -59,22 +59,8 @@ export default function WeekCalendar({ refresh }: { refresh?: number }) {
     const monday = getMondayOfWeek(weekOffset);
     const friday = new Date(monday);
     friday.setDate(monday.getDate() + 4);
-    // Načti z DB kalendáře (primární) + Google Calendar (ICS jako fallback)
-    fetch(`/api/calendar?from=${toISO(monday)}&to=${toISO(friday)}`)
-      .then(r => r.json()).then((rows) => {
-        // Převeď DB formát na Event formát
-        const dbEvents = rows.map((e: Record<string, unknown>) => ({
-          id: e.id,
-          datum: String(e.datum).slice(0,10),
-          cas_od: String(e.cas_od).slice(0,5),
-          cas_do: String(e.cas_do).slice(0,5),
-          typ: String(e.typ || "schůzka"),
-          popis: String(e.popis || ""),
-          klient_jmeno: e.klient_jmeno ? String(e.klient_jmeno) : null,
-          obsazeno: Boolean(e.obsazeno),
-        }));
-        setEvents(dbEvents);
-      }).catch(() => {});
+    fetch(`/api/gcal?from=${toISO(monday)}&to=${toISO(friday)}`)
+      .then(r => r.json()).then(setEvents).catch(() => {});
   }, [weekOffset, refresh]);
 
   useEffect(() => {

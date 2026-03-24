@@ -1,33 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { neon } from "@neondatabase/serverless";
 
-const GCAL_ICS = "https://calendar.google.com/calendar/ical/abelis.mobile%40gmail.com/public/basic.ics";
+const sql = neon(process.env.DATABASE_URL!);
 
-function parseICSDate(s: string): { date: string; time: string } {
-  // Vezmi jen část za posledním ':'
-  const val = s.includes(":") ? s.split(":").pop()! : s;
-  const v = val.trim();
-  
-  if (v.length === 8) {
-    // Celý den: YYYYMMDD
-    return { date: `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`, time: "00:00" };
-  }
-  
-  const year = v.slice(0, 4);
-  const month = v.slice(4, 6);
-  const day = v.slice(6, 8);
-  const hour = v.slice(9, 11);
-  const min = v.slice(11, 13);
-  const isUTC = v.endsWith("Z");
-  
-  if (isUTC) {
-    const d = new Date(`${year}-${month}-${day}T${hour}:${min}:00Z`);
-    // Prague timezone offset: +1 zima, +2 léto
-    const praguOffset = 2; // léto (březen-říjen)
-    const local = new Date(d.getTime() + praguOffset * 3600000);
-    const ld = local.toISOString();
-    return { date: ld.slice(0, 10), time: ld.slice(11, 16) };
-  }
-  return { date: `${year}-${month}-${day}`, time: `${hour}:${min}` };
+async function getAccessToken(): Promise<string> {
+  const rows = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
+  if (!rows.length) throw new Error("Google Calendar není připojen");
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      refresh_token: rows[0].refresh_token,
+      client_id: process.env.GOOGLE_CLIENT_ID!,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+      grant_type: "refresh_token",
+    }),
+  }).then(r => r.json());
+  return res.access_token;
 }
 
 export async function GET(req: NextRequest) {
@@ -35,44 +24,34 @@ export async function GET(req: NextRequest) {
   const from = searchParams.get("from") || new Date().toISOString().split("T")[0];
   const to = searchParams.get("to") || new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
 
-  const res = await fetch(GCAL_ICS, { cache: "no-store" });
-  const ics = await res.text();
+  try {
+    const token = await getAccessToken();
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${from}T00:00:00+01:00&timeMax=${to}T23:59:59+01:00&singleEvents=true&orderBy=startTime&maxResults=50`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    ).then(r => r.json());
 
-  const events = [];
-  const blocks = ics.split("BEGIN:VEVENT");
-  
-  for (let i = 1; i < blocks.length; i++) {
-    const block = blocks[i];
-    const get = (key: string) => {
-      const match = block.match(new RegExp(`${key}[^:]*:(.+)`));
-      return match ? match[1].trim() : "";
-    };
-    
-    const dtstart = get("DTSTART");
-    const dtend = get("DTEND");
-    const summary = get("SUMMARY") || "Událost";
-    const description = get("DESCRIPTION");
-    const location = get("LOCATION");
-    
-    if (!dtstart) continue;
-    
-    const { date, time: cas_od } = parseICSDate(dtstart);
-    const { time: cas_do } = parseICSDate(dtend || dtstart);
-    
-    if (date < from || date > to) continue;
-    
-    events.push({
-      id: i,
-      datum: date,
-      cas_od,
-      cas_do,
-      typ: "gcal",
-      popis: summary + (location ? ` @ ${location}` : ""),
-      klient_jmeno: description || null,
-      obsazeno: true,
-      source: "google",
+    const events = (res.items || []).map((e: Record<string, unknown>, i: number) => {
+      const start = (e.start as Record<string, string>)?.dateTime || (e.start as Record<string, string>)?.date || "";
+      const end = (e.end as Record<string, string>)?.dateTime || (e.end as Record<string, string>)?.date || "";
+      const datum = start.slice(0, 10);
+      const cas_od = start.length > 10 ? start.slice(11, 16) : "00:00";
+      const cas_do = end.length > 10 ? end.slice(11, 16) : "00:00";
+      return {
+        id: i + 1,
+        datum,
+        cas_od,
+        cas_do,
+        typ: "gcal",
+        popis: String(e.summary || "Událost"),
+        klient_jmeno: (e.description as string) || null,
+        obsazeno: true,
+        source: "google",
+      };
     });
-  }
 
-  return NextResponse.json(events.sort((a, b) => a.datum.localeCompare(b.datum) || a.cas_od.localeCompare(b.cas_od)));
+    return NextResponse.json(events);
+  } catch {
+    return NextResponse.json([]);
+  }
 }
