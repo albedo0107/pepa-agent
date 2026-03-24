@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import ChatApp from "./ChatApp";
 import dynamic from "next/dynamic";
-import { Users, Home, TrendingUp, DollarSign, Activity, Calendar } from "lucide-react";
+import { Users, Home, TrendingUp, DollarSign, Activity, Calendar, LayoutDashboard, MessageSquare } from "lucide-react";
 const ChartRenderer = dynamic(() => import("./ChartRenderer"), { ssr: false });
 const WeekCalendar = dynamic(() => import("./WeekCalendar"), { ssr: false });
 
@@ -34,6 +34,7 @@ function formatDate(d: string) {
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [calRefresh, setCalRefresh] = useState(0);
+  const [mobileTab, setMobileTab] = useState<"dashboard" | "chat">("dashboard");
 
   useEffect(() => {
     fetch("/api/dashboard").then(r => r.json()).then(setData).catch(() => {});
@@ -62,9 +63,27 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex h-screen text-gray-100 overflow-hidden" style={{ background: "linear-gradient(135deg, #0f1a1c 0%, #0d1f2d 40%, #0a1628 70%, #0f2320 100%)" }}>
+    <div className="flex flex-col h-screen text-gray-100 overflow-hidden" style={{ background: "linear-gradient(135deg, #0f1a1c 0%, #0d1f2d 40%, #0a1628 70%, #0f2320 100%)" }}>
+
+      {/* Mobile tab bar */}
+      <div className="flex md:hidden border-b border-gray-700/50 flex-shrink-0" style={{ background: "rgba(15,26,28,0.95)" }}>
+        <button
+          onClick={() => setMobileTab("dashboard")}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${mobileTab === "dashboard" ? "text-blue-400 border-b-2 border-blue-400" : "text-gray-400"}`}
+        >
+          <LayoutDashboard size={16} /> Dashboard
+        </button>
+        <button
+          onClick={() => setMobileTab("chat")}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${mobileTab === "chat" ? "text-blue-400 border-b-2 border-blue-400" : "text-gray-400"}`}
+        >
+          <MessageSquare size={16} /> Chat s Pepou
+        </button>
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
       {/* Levý panel — dashboard */}
-      <div className="w-[480px] flex-shrink-0 flex flex-col overflow-y-auto border-r border-gray-700/50 p-4 gap-4" style={{ background: "rgba(15,26,28,0.7)", backdropFilter: "blur(12px)" }}>
+      <div className={`${mobileTab === "dashboard" ? "flex" : "hidden"} md:flex w-full md:w-[480px] flex-shrink-0 flex-col overflow-y-auto border-r border-gray-700/50 p-4 gap-4`} style={{ background: "rgba(15,26,28,0.7)", backdropFilter: "blur(12px)" }}>
         
         {/* Header */}
         <div className="flex items-center gap-3 pb-2 border-b border-gray-800">
@@ -140,8 +159,9 @@ export default function Dashboard() {
       </div>
 
       {/* Pravý panel — Chat */}
-      <div className="flex-1 overflow-hidden">
+      <div className={`${mobileTab === "chat" ? "flex" : "hidden"} md:flex flex-1 overflow-hidden flex-col`}>
         <ChatApp embedded onCalendarUpdate={() => setCalRefresh(r => r + 1)} />
+      </div>
       </div>
     </div>
   );

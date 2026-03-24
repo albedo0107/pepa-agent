@@ -279,7 +279,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
             {msg.role === "assistant" && (
               <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold mr-2 mt-1 flex-shrink-0">P</div>
             )}
-            <div className={`max-w-2xl rounded-2xl px-4 py-3 text-sm ${
+            <div className={`max-w-[85vw] md:max-w-2xl rounded-2xl px-4 py-3 text-sm ${
               msg.role === "user" ? "bg-blue-600 text-white rounded-br-sm" : "bg-gray-800 text-gray-100 rounded-bl-sm"
             }`}>
               {msg.loading ? (
