@@ -549,10 +549,19 @@ export async function POST(req: NextRequest) {
                 const slots = await runSQL(`SELECT datum, cas_od, cas_do, obsazeno, popis, klient_jmeno, typ FROM kalendar WHERE datum >= '${from}' AND datum <= '${toDate}' ORDER BY datum, cas_od`);
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Kalendář ${from}–${toDate}:\n${slots}\n\nHledaná délka: ${duration_minutes} min. Volné sloty = obsazeno=false.` });
               } else if (tool.name === "calendar_add_event") {
-                const addResult = await fetch("http://localhost:3000/api/calendar", {
+                const calBase = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                const addResult = await fetch(`${calBase}/api/calendar`, {
                   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
                 }).then(r => r.json()).catch(() => ({ error: "Chyba" }));
-                const msg = addResult.error ? `Chyba: ${addResult.error}` : `Schůzka přidána! ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}: "${parsed.popis}"`;
+                // Zároveň zapsat do Google Calendar
+                let gcalMsg = "";
+                try {
+                  const gcalResult = await fetch(`${calBase}/api/gcal/event`, {
+                    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
+                  }).then(r => r.json());
+                  if (gcalResult.ok) gcalMsg = ` | 📅 Přidáno i do Google Calendar`;
+                } catch { /* Google Calendar nemusí být připojen */ }
+                const msg = addResult.error ? `Chyba: ${addResult.error}` : `Schůzka přidána! ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}: "${parsed.popis}"${gcalMsg}`;
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: msg });
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
               } else if (tool.name === "add_dashboard_note") {
