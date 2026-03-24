@@ -36,14 +36,15 @@ export async function GET(req: NextRequest) {
       expires_at = NOW() + INTERVAL '1 hour'
   `;
 
-  return new NextResponse(`
-    <html><body style="background:#0f1a1c;color:#10b981;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  return new NextResponse(`<!DOCTYPE html>
+    <html lang="cs"><head><meta charset="utf-8"><title>Hotovo</title></head>
+    <body style="background:#0f1a1c;color:#10b981;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
       <div style="text-align:center">
-        <div style="font-size:48px">✅</div>
-        <h2>Google Calendar připojen!</h2>
-        <p style="color:#6b7280">Pepa teď může přidávat události přímo do tvého Google Calendar.</p>
-        <a href="/" style="color:#3b82f6">← Zpět na dashboard</a>
+        <div style="font-size:48px">&#x2705;</div>
+        <h2>Google Calendar pripojen!</h2>
+        <p style="color:#6b7280">Pepa ted muze pridavat udalosti primo do tveho Google Calendar.</p>
+        <a href="/" style="color:#3b82f6">&larr; Zpet na dashboard</a>
       </div>
     </body></html>
-  `, { headers: { "Content-Type": "text/html" } });
+  `, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
