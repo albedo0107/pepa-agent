@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const GCAL_ICS = "https://calendar.google.com/calendar/ical/alex.belis%40albedoai.cz/public/basic.ics";
+const GCAL_ICS = "https://calendar.google.com/calendar/ical/abelis.mobile%40gmail.com/public/basic.ics";
 
 function parseICSDate(s: string): { date: string; time: string } {
   // Vezmi jen část za posledním ':'
