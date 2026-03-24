@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pepa — Back Office Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+  .header { background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); padding: 32px 40px; border-bottom: 1px solid #1e293b; }
+  .header h1 { font-size: 2rem; font-weight: 700; color: #60a5fa; }
+  .header p { color: #94a3b8; margin-top: 6px; font-size: 0.95rem; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; padding: 28px 40px; }
+  .kpi { background: #1e293b; border-radius: 12px; padding: 20px 24px; border-left: 4px solid; }
+  .kpi.blue { border-color: #60a5fa; }
+  .kpi.green { border-color: #34d399; }
+  .kpi.yellow { border-color: #fbbf24; }
+  .kpi.purple { border-color: #a78bfa; }
+  .kpi.red { border-color: #f87171; }
+  .kpi-label { font-size: 0.78rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; }
+  .kpi-value { font-size: 2rem; font-weight: 700; margin-top: 4px; }
+  .kpi.blue .kpi-value { color: #60a5fa; }
+  .kpi.green .kpi-value { color: #34d399; }
+  .kpi.yellow .kpi-value { color: #fbbf24; }
+  .kpi.purple .kpi-value { color: #a78bfa; }
+  .kpi.red .kpi-value { color: #f87171; }
+  .kpi-sub { font-size: 0.8rem; color: #64748b; margin-top: 4px; }
+  .section { padding: 0 40px 32px; }
+  .section h2 { font-size: 1.15rem; font-weight: 600; color: #cbd5e1; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #1e293b; }
+  .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
+  .chart-card { background: #1e293b; border-radius: 12px; padding: 24px; }
+  .chart-card h3 { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 16px; }
+  canvas { max-height: 260px; }
+  .table-card { background: #1e293b; border-radius: 12px; padding: 24px; overflow-x: auto; }
+  .table-card h3 { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  th { text-align: left; padding: 8px 12px; background: #0f172a; color: #64748b; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 10px 12px; border-bottom: 1px solid #0f172a; color: #cbd5e1; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #263348; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+  .badge.green { background: #064e3b; color: #34d399; }
+  .badge.blue { background: #1e3a5f; color: #60a5fa; }
+  .badge.yellow { background: #451a03; color: #fbbf24; }
+  .badge.red { background: #450a0a; color: #f87171; }
+  .badge.purple { background: #2e1065; color: #a78bfa; }
+  .badge.gray { background: #1e293b; color: #94a3b8; }
+  .footer { text-align: center; padding: 24px; color: #475569; font-size: 0.8rem; border-top: 1px solid #1e293b; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 Pepa — Back Office Dashboard</h1>
+  <p>Realitní firma · Přehled databáze k 23. 3. 2026</p>
+</div>
+
+<!-- KPI Row -->
+<div class="kpis">
+  <div class="kpi blue">
+    <div class="kpi-label">Klienti</div>
+    <div class="kpi-value">20</div>
+    <div class="kpi-sub">registrovaných klientů</div>
+  </div>
+  <div class="kpi yellow">
+    <div class="kpi-label">Nemovitosti</div>
+    <div class="kpi-value">15</div>
+    <div class="kpi-sub">v portfoliu</div>
+  </div>
+  <div class="kpi purple">
+    <div class="kpi-label">Leady</div>
+    <div class="kpi-value">150</div>
+    <div class="kpi-sub">celkem leadů</div>
+  </div>
+  <div class="kpi green">
+    <div class="kpi-label">Tržby z prodejů</div>
+    <div class="kpi-value">58,45 M</div>
+    <div class="kpi-sub">6 uzavřených prodejů</div>
+  </div>
+  <div class="kpi red">
+    <div class="kpi-label">Provize celkem</div>
+    <div class="kpi-value">1,75 M</div>
+    <div class="kpi-sub">průměr 3 % z prodeje</div>
+  </div>
+</div>
+
+<!-- Charts Section -->
+<div class="section">
+  <h2>📈 Grafy a statistiky</h2>
+  <div class="charts-grid">
+
+    <div class="chart-card">
+      <h3>Klienti dle zdroje</h3>
+      <canvas id="clientSource"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>Nemovitosti dle stavu</h3>
+      <canvas id="propertyStatus"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>Nemovitosti dle typu</h3>
+      <canvas id="propertyType"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>Leady dle stavu</h3>
+      <canvas id="leadStatus"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>Prodeje — cena vs. provize (Kč)</h3>
+      <canvas id="salesChart"></canvas>
+    </div>
+
+    <div class="chart-card">
+      <h3>Ceny nemovitostí (mil. Kč)</h3>
+      <canvas id="pricingChart"></canvas>
+    </div>
+
+  </div>
+</div>
+
+<!-- Klienti Table -->
+<div class="section">
+  <h2>👥 Klienti (20)</h2>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Jméno</th><th>Email</th><th>Telefon</th><th>Zdroj</th><th>Datum akvizice</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>Jana Nováková</td><td>jana.novakova@email.cz</td><td>+420 601 111 222</td><td><span class="badge green">doporučení</span></td><td>5. 1. 2026</td></tr>
+        <tr><td>2</td><td>Petr Svoboda</td><td>petr.svoboda@gmail.com</td><td>+420 602 222 333</td><td><span class="badge blue">web</span></td><td>12. 1. 2026</td></tr>
+        <tr><td>3</td><td>Marie Horáková</td><td>marie.horakova@seznam.cz</td><td>+420 603 333 444</td><td><span class="badge yellow">sreality</span></td><td>18. 1. 2026</td></tr>
+        <tr><td>4</td><td>Tomáš Dvořák</td><td>tomas.dvorak@firma.cz</td><td>+420 604 444 555</td><td><span class="badge purple">bezrealitky</span></td><td>25. 1. 2026</td></tr>
+        <tr><td>5</td><td>Eva Procházková</td><td>eva.prochazka@email.cz</td><td>+420 605 555 666</td><td><span class="badge green">doporučení</span></td><td>3. 2. 2026</td></tr>
+        <tr><td>6</td><td>Martin Kučera</td><td>martin.kucera@gmail.com</td><td>+420 606 666 777</td><td><span class="badge blue">web</span></td><td>10. 2. 2026</td></tr>
+        <tr><td>7</td><td>Lucie Veselá</td><td>lucie.vesela@seznam.cz</td><td>+420 607 777 888</td><td><span class="badge red">inzerce</span></td><td>17. 2. 2026</td></tr>
+        <tr><td>8</td><td>Ondřej Blažek</td><td>ondrej.blazek@email.cz</td><td>+420 608 888 999</td><td><span class="badge yellow">sreality</span></td><td>24. 2. 2026</td></tr>
+        <tr><td>9</td><td>Petra Marková</td><td>petra.markova@gmail.com</td><td>+420 609 999 000</td><td><span class="badge green">doporučení</span></td><td>3. 3. 2026</td></tr>
+        <tr><td>10</td><td>Jakub Pospíšil</td><td>jakub.pospisil@firma.cz</td><td>+420 610 000 111</td><td><span class="badge blue">web</span></td><td>10. 3. 2026</td></tr>
+        <tr><td>11</td><td>Alžběta Černá</td><td>alzb.cerna@email.cz</td><td>+420 611 111 000</td><td><span class="badge purple">bezrealitky</span></td><td>15. 3. 2026</td></tr>
+        <tr><td>12</td><td>Radek Novák</td><td>radek.novak@gmail.com</td><td>+420 612 222 111</td><td><span class="badge green">doporučení</span></td><td>18. 3. 2026</td></tr>
+        <tr><td>13</td><td>Simona Kratochvílová</td><td>simona.kratochvil@seznam.cz</td><td>+420 613 333 222</td><td><span class="badge yellow">sreality</span></td><td>5. 10. 2025</td></tr>
+        <tr><td>14</td><td>Pavel Šimánek</td><td>pavel.simanek@email.cz</td><td>+420 614 444 333</td><td><span class="badge blue">web</span></td><td>20. 10. 2025</td></tr>
+        <tr><td>15</td><td>Veronika Tichá</td><td>veronika.ticha@gmail.com</td><td>+420 615 555 444</td><td><span class="badge red">inzerce</span></td><td>8. 11. 2025</td></tr>
+        <tr><td>16</td><td>Marek Jelínek</td><td>marek.jelinek@firma.cz</td><td>+420 616 666 555</td><td><span class="badge green">doporučení</span></td><td>22. 11. 2025</td></tr>
+        <tr><td>17</td><td>Tereza Kopecká</td><td>tereza.kopecka@email.cz</td><td>+420 617 777 666</td><td><span class="badge purple">bezrealitky</span></td><td>1. 12. 2025</td></tr>
+        <tr><td>18</td><td>Lukáš Fiala</td><td>lukas.fiala@gmail.com</td><td>+420 618 888 777</td><td><span class="badge blue">web</span></td><td>15. 12. 2025</td></tr>
+        <tr><td>19</td><td>Kristýna Sedláčková</td><td>kristyna.sedlacek@seznam.cz</td><td>+420 619 999 888</td><td><span class="badge yellow">sreality</span></td><td>28. 12. 2025</td></tr>
+        <tr><td>20</td><td>Michal Hájek</td><td>michal.hajek@email.cz</td><td>+420 620 000 999</td><td><span class="badge green">doporučení</span></td><td>8. 1. 2026</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Nemovitosti Table -->
+<div class="section">
+  <h2>🏠 Nemovitosti (15)</h2>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Název</th><th>Lokalita</th><th>Typ</th><th>Dispozice</th><th>Cena</th><th>Plocha</th><th>Stav</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>3</td><td>Dům Braník</td><td>Praha 4</td><td>dům</td><td>—</td><td>14 500 000 Kč</td><td>185 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>9</td><td>Byt 4+kk Dejvice</td><td>Praha 6</td><td>byt</td><td>4+kk</td><td>12 800 000 Kč</td><td>98 m²</td><td><span class="badge green">prodáno</span></td></tr>
+        <tr><td>12</td><td>Dům Modřany</td><td>Praha 12</td><td>dům</td><td>—</td><td>11 200 000 Kč</td><td>160 m²</td><td><span class="badge green">prodáno</span></td></tr>
+        <tr><td>2</td><td>Byt 3+1 Vinohrady</td><td>Praha 2</td><td>byt</td><td>3+1</td><td>9 200 000 Kč</td><td>78 m²</td><td><span class="badge green">prodáno</span></td></tr>
+        <tr><td>6</td><td>Komerční prostor Holešovice</td><td>Praha 7</td><td>komerční</td><td>—</td><td>8 900 000 Kč</td><td>120 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>13</td><td>Byt 2+kk Nové Město</td><td>Praha 1</td><td>byt</td><td>2+kk</td><td>8 500 000 Kč</td><td>48 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>14</td><td>Byt 3+1 Holešovice</td><td>Praha 7</td><td>byt</td><td>3+1</td><td>8 200 000 Kč</td><td>80 m²</td><td><span class="badge yellow">rezervace</span></td></tr>
+        <tr><td>7</td><td>Byt 3+kk Nusle</td><td>Praha 4</td><td>byt</td><td>3+kk</td><td>7 800 000 Kč</td><td>72 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>5</td><td>Byt 2+1 Smíchov</td><td>Praha 5</td><td>byt</td><td>2+1</td><td>6 500 000 Kč</td><td>65 m²</td><td><span class="badge yellow">rezervace</span></td></tr>
+        <tr><td>10</td><td>Byt 2+kk Holešovice (Tusarova)</td><td>Praha 7</td><td>byt</td><td>2+kk</td><td>6 100 000 Kč</td><td>55 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>1</td><td>Byt 2+kk Holešovice (Dělnická)</td><td>Praha 7</td><td>byt</td><td>2+kk</td><td>5 800 000 Kč</td><td>52 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>15</td><td>Komerční prostor Žižkov</td><td>Praha 3</td><td>komerční</td><td>—</td><td>5 600 000 Kč</td><td>85 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>8</td><td>Pozemek Čimice</td><td>Praha 8</td><td>pozemek</td><td>—</td><td>4 200 000 Kč</td><td>450 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>11</td><td>Byt 1+1 Žižkov</td><td>Praha 3</td><td>byt</td><td>1+1</td><td>3 800 000 Kč</td><td>38 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+        <tr><td>4</td><td>Byt 1+kk Žižkov</td><td>Praha 3</td><td>byt</td><td>1+kk</td><td>3 200 000 Kč</td><td>32 m²</td><td><span class="badge blue">k prodeji</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Prodeje Table -->
+<div class="section">
+  <h2>💰 Uzavřené prodeje (6)</h2>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr><th>Nemovitost</th><th>Klient</th><th>Datum prodeje</th><th>Cena prodeje</th><th>Provize</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Dům Braník</td><td>Marie Horáková</td><td>5. 3. 2026</td><td>14 200 000 Kč</td><td><span class="badge green">426 000 Kč</span></td></tr>
+        <tr><td>Byt 2+1 Smíchov</td><td>Eva Procházková</td><td>10. 2. 2026</td><td>6 300 000 Kč</td><td><span class="badge green">189 000 Kč</span></td></tr>
+        <tr><td>Byt 2+kk Holešovice</td><td>Jana Nováková</td><td>18. 1. 2026</td><td>5 650 000 Kč</td><td><span class="badge green">169 500 Kč</span></td></tr>
+        <tr><td>Dům Modřany</td><td>Radek Novák</td><td>22. 12. 2025</td><td>10 800 000 Kč</td><td><span class="badge green">324 000 Kč</span></td></tr>
+        <tr><td>Byt 4+kk Dejvice</td><td>Petra Marková</td><td>15. 11. 2025</td><td>12 500 000 Kč</td><td><span class="badge green">375 000 Kč</span></td></tr>
+        <tr><td>Byt 3+1 Vinohrady</td><td>Petr Svoboda</td><td>28. 10. 2025</td><td>9 000 000 Kč</td><td><span class="badge green">270 000 Kč</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Kalendář -->
+<div class="section">
+  <h2>📅 Kalendář — nadcházející sloty prohlídek</h2>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr><th>Datum</th><th>Čas od</th><th>Čas do</th><th>Typ</th><th>Obsazeno</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>23. 3. 2026</td><td>09:00</td><td>10:00</td><td>prohlídka</td><td><span class="badge green">volný</span></td></tr>
+        <tr><td>23. 3. 2026</td><td>10:30</td><td>11:30</td><td>prohlídka</td><td><span class="badge red">obsazeno</span></td></tr>
+        <tr><td>23. 3. 2026</td><td>14:00</td><td>15:00</td><td>prohlídka</td><td><span class="badge red">obsazeno</span></td></tr>
+        <tr><td>23. 3. 2026</td><td>15:30</td><td>16:30</td><td>prohlídka</td><td><span class="badge green">volný</span></td></tr>
+        <tr><td>24. 3. 2026</td><td>09:00</td><td>10:00</td><td>prohlídka</td><td><span class="badge green">volný</span></td></tr>
+        <tr><td>24. 3. 2026</td><td>10:30</td><td>11:30</td><td>prohlídka</td><td><span class="badge green">volný</span></td></tr>
+        <tr><td>24. 3. 2026</td><td>14:00</td><td>15:00</td><td>prohlídka</td><td><span class="badge green">volný</span></td></tr>
+        <tr><td>24. 3. 2026</td><td>15:30</td><td>16:30</td><td>prohlídka</td><td><span class="badge green">volný</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="footer">Pepa Back Office Agent · vygenerováno 23. 3. 2026 · data z Neon DB</div>
+
+<script>
+const chartDefaults = {
+  plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } } },
+  scales: { x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } }, y: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } } }
+};
+
+// Klienti dle zdroje
+new Chart(document.getElementById('clientSource'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Doporučení', 'Web', 'Sreality', 'Bezrealitky', 'Inzerce'],
+    datasets: [{ data: [6, 5, 4, 3, 2], backgroundColor: ['#34d399','#60a5fa','#fbbf24','#a78bfa','#f87171'], borderWidth: 0 }]
+  },
+  options: { plugins: { legend: { labels: { color: '#94a3b8' } } } }
+});
+
+// Nemovitosti dle stavu
+new Chart(document.getElementById('propertyStatus'), {
+  type: 'bar',
+  data: {
+    labels: ['K prodeji', 'Prodáno', 'Rezervace'],
+    datasets: [{ label: 'Počet', data: [10, 3, 2], backgroundColor: ['#60a5fa','#34d399','#fbbf24'], borderRadius: 6 }]
+  },
+  options: { ...chartDefaults, plugins: { legend: { display: false } } }
+});
+
+// Nemovitosti dle typu
+new Chart(document.getElementById('propertyType'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Byt', 'Dům', 'Komerční', 'Pozemek'],
+    datasets: [{ data: [10, 2, 2, 1], backgroundColor: ['#60a5fa','#34d399','#fbbf24','#a78bfa'], borderWidth: 0 }]
+  },
+  options: { plugins: { legend: { labels: { color: '#94a3b8' } } } }
+});
+
+// Leady dle stavu (approximate)
+new Chart(document.getElementById('leadStatus'), {
+  type: 'bar',
+  data: {
+    labels: ['Konvertován', 'Zamítnut', 'Kontaktován', 'Schůzka', 'Nový'],
+    datasets: [{ label: 'Počet leadů', data: [40, 47, 33, 18, 12], backgroundColor: ['#34d399','#f87171','#60a5fa','#fbbf24','#a78bfa'], borderRadius: 6 }]
+  },
+  options: { ...chartDefaults, plugins: { legend: { display: false } } }
+});
+
+// Prodeje
+new Chart(document.getElementById('salesChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Dům Braník', 'Byt 4+kk Dejvice', 'Dům Modřany', 'Byt 3+1 Vinohrady', 'Byt 2+1 Smíchov', 'Byt 2+kk Holešovice'],
+    datasets: [
+      { label: 'Cena prodeje', data: [14200000, 12500000, 10800000, 9000000, 6300000, 5650000], backgroundColor: '#60a5fa', borderRadius: 4 },
+      { label: 'Provize', data: [426000, 375000, 324000, 270000, 189000, 169500], backgroundColor: '#34d399', borderRadius: 4 }
+    ]
+  },
+  options: { ...chartDefaults }
+});
+
+// Cenová mapa
+new Chart(document.getElementById('pricingChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Dům\nBraník', 'Byt 4+kk\nDejvice', 'Dům\nModřany', 'Byt 3+1\nVinohrady', 'Kom.\nHolešovice', 'Byt 2+kk\nNové Město', 'Byt 3+1\nHolešovice', 'Byt 3+kk\nNusle', 'Byt 2+1\nSmíchov', 'Byt 2+kk\nHolešovice', 'Byt 2+kk\nHolešovice2', 'Kom.\nŽižkov', 'Pozemek\nČimice', 'Byt 1+1\nŽižkov', 'Byt 1+kk\nŽižkov'],
+    datasets: [{ label: 'Cena (mil. Kč)', data: [14.5, 12.8, 11.2, 9.2, 8.9, 8.5, 8.2, 7.8, 6.5, 6.1, 5.8, 5.6, 4.2, 3.8, 3.2], backgroundColor: '#a78bfa', borderRadius: 4 }]
+  },
+  options: { ...chartDefaults, plugins: { legend: { display: false } }, indexAxis: 'y' }
+});
+</script>
+</body>
+</html>
