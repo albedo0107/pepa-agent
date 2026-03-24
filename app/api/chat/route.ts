@@ -1,857 +1,99 @@
 import { NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
-import { neon } from "@neondatabase/serverless";
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-const sql = neon(process.env.DATABASE_URL!);
-const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
-async function sendToTelegram(userMsg: string, assistantMsg: string) {
-  if (!TG_TOKEN || !TG_CHAT_ID) return;
-  const clean = assistantMsg
-    .replace(/_🔍 Dotazuji databázi..._\n/g, "")
-    .replace(/^\[\[reply_to_current\]\]\s*/g, "")
-    .replace(/^\]\s*/, "");
-  const text = `💬 *Web dotaz:* ${userMsg}\n\n👊 *Pepa:* ${clean}`;
-  await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: "Markdown" }),
-  }).catch(() => {});
-}
-
-async function runSQL(query: string): Promise<string> {
-  try {
-    const rows = await sql.query(query) as Record<string, unknown>[];
-    if (!rows || rows.length === 0) return "Žádné výsledky";
-    const headers = Object.keys(rows[0]);
-    const lines = rows.map((r) =>
-      headers.map(h => String(r[h] ?? "")).join(" | ")
-    );
-    return [headers.join(" | "), ...lines].join("\n");
-  } catch (e: unknown) {
-    return `SQL error: ${e instanceof Error ? e.message : String(e)}`;
-  }
-}
-
-const TODAY = new Date().toLocaleDateString("cs-CZ", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-const DRIVE_FOLDER = "https://drive.google.com/drive/folders/1jxnWBwCu0ik18D5sAFy4bE0t7q0aSUtZ";
-const DRIVE_FILES: Record<string, string> = {
-  "nove_leady.csv": "17kU39gMHZq5JD5ieFEiAL9o1kQD2cal3",
-};
-const TODAY_ISO = new Date().toISOString().split("T")[0];
-
-// Dynamicky přidej soubory z Drive při každém spuštění
-async function getDriveFiles(): Promise<string> {
-  try {
-    const html = await fetch(DRIVE_FOLDER, { headers: { "User-Agent": "Mozilla/5.0" } }).then(r => r.text());
-    const files: string[] = [];
-    const matches = html.matchAll(/"([a-zA-Z0-9_-]{25,})".*?"([^"]+\.(csv|docx|xlsx|pdf|txt))"/g);
-    for (const m of matches) {
-      files.push(`- ${m[2]} (ID: ${m[1]}) — https://drive.google.com/uc?export=download&id=${m[1]}`);
-      DRIVE_FILES[m[2]] = m[1];
-    }
-    return files.length > 0 ? files.join("\n") : Object.entries(DRIVE_FILES).map(([n, id]) => `- ${n} (ID: ${id})`).join("\n");
-  } catch {
-    return Object.entries(DRIVE_FILES).map(([n, id]) => `- ${n} (ID: ${id}) — https://drive.google.com/uc?export=download&id=${id}`).join("\n");
-  }
-}
-
-const SYSTEM_PROMPT_BASE = `Jsi Pepa, AI back office agent realitní firmy. Vždy odpovídej POUZE v češtině. Nikdy nepoužívej jiné jazyky ani písma.
-Dnešní datum: ${TODAY} (${TODAY_ISO})
-Příští týden: ${new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0]} – ${new Date(Date.now() + 11 * 86400000).toISOString().split("T")[0]}
-DŮLEŽITÉ:
-- Volej sql_query MAX 1x na dotaz — zahrň vše do jednoho dotazu.
-- Nikdy neopakuj "Perfektní!", "Výborně!" apod. před každou akcí. Jen jednou na začátku max.
-- Máš PLNÝ přístup k Google Calendar přes OAuth. Nástroje:
-  * calendar_list_events — načte události z Google Calendar (s jejich ID). VŽDY použij před mazáním.
-  * calendar_add_event — přidá událost přímo do Google Calendar
-  * calendar_delete_event — smaže událost podle gcal_event_id (získej ho z calendar_list_events)
-  * calendar_find_slot — najde volný termín v Google Calendar
-  NIKDY nepoužívej sql_query pro kalendářové operace. NIKDY neodkazuj na interní databázi kalendáře.
-- Když píšeš email, VŽDY zavolej open_gmail_draft tool.
-- Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
-- Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
-- Když nemovitost má chybějící data (rok výstavby, rekonstrukce), VŽDY zavolej enrich_property tool.
-- Máš přístup k internetu přes web_search tool (Brave Search). Použij ho kdykoli potřebuješ aktuální data — nové inzeráty, ceny, kontakty, novinky.
-- Po přečtení emailu se schůzkou VŽDY zavolej add_dashboard_note s detaily (kdo, kdy, o čem).
-- Po naplánování každé události v kalendáři VŽDY zavolej add_dashboard_note s poznámkou.
-- Když uživatel chce vědět jak si stojíme vs. konkurence nebo jaká je tržní cena v lokalitě, zavolej competitive_intelligence tool.
-
-LEAD SCORING pravidla:
-- Zdroj "doporučení" = +30 bodů (nejvyšší konverze)
-- Zdroj "web" = +20 bodů
-- Zdroj "sreality/bezrealitky" = +10 bodů
-- Budget nad 10M = +20 bodů
-- Zájem o konkrétní nemovitost = +15 bodů
-- Priorita vysoká (skóre 75-100): "Zavolat do 2 hodin"
-- Priorita střední (50-74): "Kontaktovat do 24 hodin"
-- Priorita nízká (0-49): "Sledovat, email do týdne"
-
-DB tabulky:
-- klienti (id, jmeno, email, telefon, zdroj, datum_akvizice)
-- nemovitosti (id, nazev, adresa, lokalita, typ, dispozice, cena_kc, stav, plocha_m2, rok_vystavby, rekonstrukce_rok, rekonstrukce_popis, stavebni_upravy)
-- leady (id, jmeno, email, zdroj, datum, nemovitost_id, stav)
-- prodeje (id, nemovitost_id, klient_id, datum_prodeje, cena_prodeje, provize_kc)
-- soubory (id, nazev, typ, velikost, obsah TEXT, obsah_base64, nahrano_at) — nahrané soubory uživatelem; obsah = text/CSV, obsah_base64 = binární soubory
-- obchodnici (id, jmeno, email, telefon) — 5 obchodníků firmy
-- Zasedací místnost: "Zasedací místnost Vojty Žižky" — zadávej do location při calendar_add_event
-
-AgentMail inbox: albedo_ai_agnet@agentmail.to — přes read_emails tool.
-Při čtení emailů: detekuj schůzky, termíny a požadavky → naplánuj přes smart_calendar_orchestrate → zkontroluj konflikt místnosti.
-
-Google Drive firemní složka: ${DRIVE_FOLDER}
-Soubory v Drive:
-${Object.entries(DRIVE_FILES).map(([n, id]) => `- ${n}: https://drive.google.com/uc?export=download&id=${id}`).join("\n")}
-Při čtení Drive souborů VŽDY použij read_drive_document tool s příslušnou URL.`;
-
-const tools: Anthropic.Tool[] = [
-  {
-    name: "sql_query",
-    description: "SQL SELECT dotaz na firemní DB.",
-    input_schema: {
-      type: "object" as const,
-      properties: { query: { type: "string" } },
-      required: ["query"],
-    },
-  },
-  {
-    name: "score_lead",
-    description: "Vyhodnotí a ohodnotí lead skórem 0-100 a uloží do DB. Volej vždy při přidání nebo importu nového leadu.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        lead_id: { type: "number", description: "ID leadu v databázi" },
-        skore: { type: "number", description: "Skóre 0-100 (100 = nejhorší lead)" },
-        priorita: { type: "string", enum: ["vysoká", "střední", "nízká"], description: "Priorita leadu" },
-        doporucena_akce: { type: "string", description: "Konkrétní doporučená akce, např. 'Zavolat do 2 hodin'" },
-        zduvodneni: { type: "string", description: "Krátké zdůvodnění skóre" },
-      },
-      required: ["lead_id", "skore", "priorita", "doporucena_akce"],
-    },
-  },
-  {
-    name: "read_drive_document",
-    description: "Přečte dokument z Google Drive složky (veřejně sdílený). Použij když uživatel chce přečíst, zpracovat nebo importovat dokument z Drive.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        file_url: { type: "string", description: "Přímý link na soubor (drive.google.com/file/d/ID nebo docs.google.com)" },
-        action: { type: "string", enum: ["read", "import_to_db"], description: "read = přečíst obsah, import_to_db = extrahovat data a uložit do DB" },
-      },
-      required: ["file_url"],
-    },
-  },
-  {
-    name: "list_drive_folder",
-    description: "Zobrazí seznam souborů ve sdílené Google Drive složce.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        folder_url: { type: "string", description: "Link na Google Drive složku" },
-      },
-      required: ["folder_url"],
-    },
-  },
-  {
-    name: "open_gmail_draft",
-    description: "Otevře Gmail compose okno s předvyplněným emailem (draft). Použij když má uživatel odeslat email — vytvoří se draft v Gmailu čekající na schválení.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        to: { type: "string", description: "Email příjemce" },
-        subject: { type: "string", description: "Předmět emailu" },
-        body: { type: "string", description: "Text emailu" },
-      },
-      required: ["to", "subject", "body"],
-    },
-  },
-  {
-    name: "calendar_find_slot",
-    description: "Najde volné časové sloty v kalendáři pro zadaný den nebo rozsah dní.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        from: { type: "string", description: "Od data (YYYY-MM-DD)" },
-        to: { type: "string", description: "Do data (YYYY-MM-DD)" },
-        duration_minutes: { type: "number", description: "Délka schůzky v minutách" },
-      },
-      required: ["from"],
-    },
-  },
-  {
-    name: "calendar_list_events",
-    description: "Načte seznam událostí z Google Calendar. Vrátí názvy, časy a Google Calendar ID. VŽDY použij před mazáním. Pokud uživatel řekne 'poslední 3 týdny' nastav from=3 týdny zpět, pro 'příští rok' nastav to=rok dopředu.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        from: { type: "string", description: "Od data (YYYY-MM-DD). Default: 3 týdny zpět." },
-        to: { type: "string", description: "Do data (YYYY-MM-DD). Default: 1 rok dopředu." },
-        max_results: { type: "number", description: "Max počet výsledků (default 100, max 500)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "calendar_delete_event",
-    description: "Smaže událost z Google Calendar podle Google Calendar event ID (získej ho přes calendar_list_events).",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        gcal_event_id: { type: "string", description: "Google Calendar event ID (z calendar_list_events)" },
-        nazev: { type: "string", description: "Název události (pro potvrzení)" },
-      },
-      required: ["gcal_event_id"],
-    },
-  },
-  {
-    name: "smart_calendar_orchestrate",
-    description: "Smart Calendar Orchestration — najde nejlepší volný slot pro schůzku s více účastníky, respektuje buffer časy mezi schůzkami a kontroluje konflikty. Použij když uživatel chce naplánovat schůzku s klientem nebo více lidmi.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        ucastnici: { type: "array", items: { type: "string" }, description: "Jména účastníků (klienti, kolegové)" },
-        from: { type: "string", description: "Hledat od data (YYYY-MM-DD)" },
-        to: { type: "string", description: "Hledat do data (YYYY-MM-DD)" },
-        duration_minutes: { type: "number", description: "Délka schůzky v minutách (default 60)" },
-        buffer_minutes: { type: "number", description: "Buffer čas před/po schůzce v minutách (default 15)" },
-        preferred_hours: { type: "string", description: "Preferovaný čas např. '9:00-17:00'" },
-        typ: { type: "string", description: "Typ: schůzka, prohlídka" },
-        poznamka: { type: "string", description: "Název/popis schůzky" },
-      },
-      required: ["from", "duration_minutes"],
-    },
-  },
-  {
-    name: "calendar_add_event",
-    description: "Přidá novou schůzku nebo událost do kalendáře.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        datum: { type: "string", description: "Datum (YYYY-MM-DD)" },
-        cas_od: { type: "string", description: "Začátek (HH:MM)" },
-        cas_do: { type: "string", description: "Konec (HH:MM)" },
-        popis: { type: "string", description: "Název/popis události" },
-        klient_jmeno: { type: "string", description: "Jméno klienta (volitelné)" },
-        typ: { type: "string", description: "Typ: schůzka, prohlídka, blokováno" },
-        mistnost: { type: "string", description: "Zasedací místnost (např. 'Zasedací místnost Vojty Žižky')" },
-      },
-      required: ["datum", "cas_od", "cas_do", "popis"],
-    },
-  },
-  {
-    name: "create_document",
-    description: "Vytvoří dokument ke stažení. Formáty: 'docx' (Word, ideální pro reporty a přehledy), 'pptx' (prezentace, použij slides pole), 'pdf' (HTML report), 'xlsx' (Excel tabulka — použij pro export dat, seznamy klientů/leadů/nemovitostí). Pro datové přehledy a reporty VŽDY používej 'docx' nebo 'xlsx'.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        format: { type: "string", enum: ["pdf", "docx", "pptx", "xlsx"] },
-        title: { type: "string" },
-        content: { type: "string", description: "Obsah pro PDF/DOCX" },
-        data: {
-          type: "object",
-          properties: {
-            headers: { type: "array", items: { type: "string" } },
-            rows: { type: "array", items: { type: "array", items: { type: "string" } } },
-          },
-        },
-        slides: {
-          type: "array",
-          description: "Pro PPTX: pole slidů. Slide 0 = titulní, ostatní jsou obsahové.",
-          items: {
-            type: "object",
-            properties: {
-              title: { type: "string" },
-              content: { type: "string", description: "Text obsahu (odrážky začínají -)" },
-              table: {
-                type: "object",
-                properties: {
-                  headers: { type: "array", items: { type: "string" } },
-                  rows: { type: "array", items: { type: "array", items: { type: "string" } } },
-                },
-              },
-            },
-          },
-        },
-      },
-      required: ["format", "title"],
-    },
-  },
-  {
-    name: "add_dashboard_note",
-    description: "Přidá poznámku/záznam na dashboard. Použij VŽDY když: přečteš email se schůzkou, naplánuješ událost, zjistíš důležitou informaci. Typ: 'schuzka', 'email', 'info', 'upozorneni'.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        nadpis: { type: "string", description: "Krátký nadpis poznámky" },
-        obsah: { type: "string", description: "Detail — kdo, kdy, o čem" },
-        typ: { type: "string", description: "schuzka | email | info | upozorneni" },
-        zdroj: { type: "string", description: "Odkud info pochází (email, chat, ...)" },
-      },
-      required: ["nadpis"],
-    },
-  },
-  {
-    name: "read_emails",
-    description: "Přečte emaily z AgentMail inboxu. Použij když uživatel chce přečíst emaily, zjistit požadavky, zpracovat schůzky z emailů nebo stáhnout přílohy.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        limit: { type: "number", description: "Počet emailů (default 10)" },
-      },
-      required: [],
-    },
-  },
-  {
-    name: "enrich_property",
-    description: "Data Enrichment — doplní chybějící data o nemovitosti (rok výstavby, rekonstrukce, stavební úpravy) z veřejných zdrojů nebo odhadem na základě lokality, dispozice a ceny. Použij když nemovitost má NULL hodnoty v těchto polích.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        nemovitost_id: { type: "number", description: "ID nemovitosti v DB" },
-        nazev: { type: "string", description: "Název nemovitosti" },
-        adresa: { type: "string", description: "Adresa nemovitosti" },
-        lokalita: { type: "string", description: "Lokalita/čtvrť" },
-        typ: { type: "string", description: "Typ: byt, dům, komerční" },
-        dispozice: { type: "string", description: "Dispozice např. 3+1" },
-        cena_kc: { type: "number", description: "Cena v Kč" },
-        plocha_m2: { type: "number", description: "Plocha v m²" },
-      },
-      required: ["nemovitost_id"],
-    },
-  },
-  {
-    name: "web_search",
-    description: "Vyhledá aktuální informace na internetu přes Brave Search. Použij pro: nové inzeráty nemovitostí, aktuální ceny, novinky z trhu, kontaktní údaje firem, cokoliv co vyžaduje aktuální data z webu.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        query: { type: "string", description: "Vyhledávací dotaz" },
-        count: { type: "number", description: "Počet výsledků (default 8, max 10)" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "competitive_intelligence",
-    description: "Competitive Intelligence — analyzuje konkurenční nabídky na Sreality/Bezrealitky pro danou lokalitu a typ nemovitosti. Porovná naše ceny s trhem a doporučí cenovou strategii.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        lokalita: { type: "string", description: "Lokalita/Praha čtvrť nebo město" },
-        typ: { type: "string", description: "Typ: byt, dům, komerční" },
-        dispozice: { type: "string", description: "Dispozice např. 3+1 (volitelné)" },
-        nase_cena: { type: "number", description: "Naše cena v Kč pro porovnání (volitelné)" },
-      },
-      required: ["lokalita"],
-    },
-  },
-  {
-    name: "create_chart",
-    description: "Vytvoří graf z dat. Použij když uživatel chce vizualizaci, graf nebo přehled dat.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        type: { type: "string", enum: ["bar", "line", "pie"], description: "Typ grafu" },
-        title: { type: "string", description: "Název grafu" },
-        data: {
-          type: "array",
-          description: "Pole objektů {name, value} nebo {name, value1, value2...}",
-          items: { type: "object" }
-        },
-        dataKeys: { type: "array", items: { type: "string" }, description: "Klíče dat (default: ['value'])" },
-      },
-      required: ["type", "title", "data"],
-    },
-  },
-];
+const OPENCLAW_URL = "http://localhost:18789";
+const HOOKS_TOKEN = "pepa-hooks-secret-2026";
 
 export async function POST(req: NextRequest) {
-  const { message, history = [] } = await req.json();
-  const encoder = new TextEncoder();
+  const { message, history } = await req.json();
 
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (text: string) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
+      const encoder = new TextEncoder();
 
-      // Sestav historii pro Claude
-      const historyMessages: Anthropic.MessageParam[] = history
-        .filter((m: { role: string; content: string }) => m.role !== "assistant" || !m.content.includes("Ahoj! Jsem **Pepa**"))
-        .map((m: { role: string; content: string }) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        }));
+      try {
+        const historyText = Array.isArray(history) && history.length > 0
+          ? history.slice(-8).map((m: { role: string; content: string }) =>
+              `${m.role === "user" ? "Uživatel" : "Pepa"}: ${m.content}`
+            ).join("\n") + "\n\n"
+          : "";
 
-      let fullResponse = "";
+        const fullMessage = historyText
+          ? `Kontext předchozí konverzace:\n${historyText}Uživatel: ${message}`
+          : message;
 
-      const messages: Anthropic.MessageParam[] = [
-        ...historyMessages,
-        { role: "user", content: message },
-      ];
-
-      for (let i = 0; i < 8; i++) {
-        // Použij streaming pro finální odpověď
-        const streamResp = client.messages.stream({
-          model: "claude-sonnet-4-5",
-          max_tokens: 8192,
-          system: SYSTEM_PROMPT_BASE,
-          tools,
-          messages,
-          // Po 2. iteraci zakáž tools aby Claude odpověděl textem
-          ...(i >= 2 ? { tool_choice: { type: "none" as const } } : {}),
+        // Pošli do OpenClaw hooks
+        const hookRes = await fetch(`${OPENCLAW_URL}/hooks/agent`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${HOOKS_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: fullMessage,
+            name: "pepa-webchat",
+            sessionKey: "hook:pepa-webchat",
+            deliver: false,
+            timeoutSeconds: 50,
+          }),
         });
 
-        // Sbírej všechny tool calls během streamu
-        const toolCalls: { id: string; name: string; input: string }[] = [];
-        let currentToolIdx = -1;
-        let fullContent: Anthropic.ContentBlock[] = [];
-        let stopReason = "";
-
-        for await (const event of streamResp) {
-          if (event.type === "content_block_start" && event.content_block.type === "tool_use") {
-            toolCalls.push({ id: event.content_block.id, name: event.content_block.name, input: "" });
-            currentToolIdx = toolCalls.length - 1;
-            const name = event.content_block.name;
-            // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", calendar_delete_event: "🗑️ Mažu událost...", calendar_list_events: "📅 Načítám události z kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
-            if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
-          }
-          if (event.type === "content_block_delta") {
-            if (event.delta.type === "text_delta") {
-              fullResponse += event.delta.text;
-              send(event.delta.text);
-            } else if (event.delta.type === "input_json_delta" && currentToolIdx >= 0) {
-              toolCalls[currentToolIdx].input += event.delta.partial_json;
-            }
-          }
-          if (event.type === "message_delta") stopReason = event.delta.stop_reason || "";
-          if (event.type === "message_stop") {
-            const msg = await streamResp.finalMessage();
-            fullContent = msg.content;
-          }
+        if (!hookRes.ok) {
+          throw new Error(`Hook error ${hookRes.status}: ${await hookRes.text()}`);
         }
 
-        if (stopReason === "end_turn") break;
+        const startTime = Date.now();
 
-        if (stopReason === "tool_use" && toolCalls.length > 0) {
-          messages.push({ role: "assistant", content: fullContent });
-          const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        // Poll session soubory
+        const sessionDir = `${process.env.HOME}/.openclaw/agents/main/sessions`;
+        let response = "";
 
-          for (const tool of toolCalls) {
-            try {
-              const parsed = JSON.parse(tool.input);
-              if (tool.name === "sql_query") {
-                const sqlResult = await runSQL(parsed.query);
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: sqlResult });
-              } else if (tool.name === "create_chart") {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chart: parsed })}\n\n`));
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Graf zobrazen." });
-              } else if (tool.name === "score_lead") {
-                const { lead_id, skore, priorita, doporucena_akce, zduvodneni } = parsed;
-                const result = await runSQL(`UPDATE leady SET skore=${skore}, priorita='${priorita}', doporucena_akce='${doporucena_akce}' WHERE id=${lead_id} RETURNING id, jmeno, skore, priorita, doporucena_akce`);
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ leadScore: { lead_id, skore, priorita, doporucena_akce, zduvodneni } })}\n\n`));
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Lead #${lead_id} ohodnocen: ${skore}/100, ${priorita} priorita. ${result}` });
-              } else if (tool.name === "read_drive_document") {
-                try {
-                  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-                  const res = await fetch(`${baseUrl}/api/drive/read`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ file_url: parsed.file_url }),
-                  });
-                  const data = await res.json();
-                  if (data.ok) {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Dokument přečten (${data.type}, ${data.pages || 1} stran):\n\n${data.text}` });
-                  } else {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${data.error}` });
-                  }
-                } catch (e) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba při čtení: ${e}` });
-                }
-              } else if (tool.name === "list_drive_folder") {
-                try {
-                  const res = await fetch(parsed.folder_url, { headers: { "User-Agent": "Mozilla/5.0" } });
-                  const html = await res.text();
-                  // Extrahuj jména souborů z Drive HTML
-                  const files = [...html.matchAll(/"([^"]+\.(pdf|docx|xlsx|txt|csv|doc))"/gi)].map(m => m[1]);
-                  const unique = [...new Set(files)].slice(0, 20);
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: unique.length > 0 ? `Soubory ve složce:\n${unique.join("\n")}` : "Složka je prázdná nebo nepřístupná. Nahraj soubory do složky a zkus znovu." });
-                } catch (e) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e}` });
-                }
-              } else if (tool.name === "open_gmail_draft") {
-                const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(parsed.to)}&su=${encodeURIComponent(parsed.subject)}&body=${encodeURIComponent(parsed.body)}`;
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ gmailDraft: { url: gmailUrl, to: parsed.to, subject: parsed.subject, preview: parsed.body.slice(0, 150) } })}\n\n`));
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Gmail draft připraven. Uživatel může kliknout pro otevření v Gmailu.` });
-              } else if (tool.name === "smart_calendar_orchestrate") {
-                const { ucastnici = [], from, to, duration_minutes = 60, buffer_minutes = 15, preferred_hours = "9:00-17:00", typ = "schůzka", poznamka } = parsed;
-                const toDate = to || new Date(new Date(from).getTime() + 7 * 86400000).toISOString().split("T")[0];
-                const [prefStart, prefEnd] = preferred_hours.split("-").map((t: string) => t.trim());
-                const [prefStartH, prefStartM] = prefStart.split(":").map(Number);
-                const [prefEndH, prefEndM] = prefEnd.split(":").map(Number);
-                const prefStartMin = prefStartH * 60 + (prefStartM || 0);
-                const prefEndMin = prefEndH * 60 + (prefEndM || 0);
+        for (let i = 0; i < 50; i++) {
+          await new Promise(r => setTimeout(r, 1000));
+          try {
+            const { execSync } = await import("child_process");
+            const sessions = JSON.parse(
+              execSync(`cat ${sessionDir}/sessions.json 2>/dev/null || echo {}`).toString()
+            );
+            const hookSessionId = sessions["agent:main:hook:pepa-webchat"]?.sessionId;
+            if (!hookSessionId) continue;
 
-                // Načti obsazené sloty z Google Calendar
-                let existingRaw: Record<string, unknown>[] = [];
-                try {
-                  const gcRows2 = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
-                  if (gcRows2.length) {
-                    const tk2 = await fetch("https://oauth2.googleapis.com/token", {
-                      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                      body: new URLSearchParams({ refresh_token: gcRows2[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
-                    }).then(r => r.json());
-                    const gcItems = await fetch(
-                      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${from}T00:00:00+01:00&timeMax=${toDate}T23:59:59+01:00&singleEvents=true`,
-                      { headers: { "Authorization": `Bearer ${tk2.access_token}` } }
-                    ).then(r => r.json());
-                    existingRaw = (gcItems.items || []).map((e: Record<string, unknown>) => ({
-                      datum: ((e.start as Record<string,string>)?.dateTime || "").slice(0, 10),
-                      cas_od: ((e.start as Record<string,string>)?.dateTime || "").slice(11, 16),
-                      cas_do: ((e.end as Record<string,string>)?.dateTime || "").slice(11, 16),
-                      popis: e.summary,
-                    }));
-                  }
-                } catch { existingRaw = []; }
+            const lines = execSync(`tail -30 ${sessionDir}/${hookSessionId}.jsonl 2>/dev/null || echo`).toString().split("\n");
+            const reversed = [...lines].reverse();
+            const lastAssistant = reversed.find(l => {
+              try { const o = JSON.parse(l); return o.type === "message" && o.message?.role === "assistant"; } catch { return false; }
+            });
 
-                // Najdi volné sloty s bufferem
-                const suggestions: { datum: string; cas_od: string; cas_do: string; conflicts: string[] }[] = [];
-                const current = new Date(from);
-                const end = new Date(toDate);
-
-                while (current <= end && suggestions.length < 5) {
-                  const iso = current.toISOString().split("T")[0];
-                  const dayEvents = existingRaw.filter((e: Record<string, unknown>) => e.datum === iso);
-
-                  // Generuj kandidáty po 30 min
-                  for (let startMin = prefStartMin; startMin + duration_minutes <= prefEndMin; startMin += 30) {
-                    const endMin = startMin + duration_minutes;
-                    const bufferedStart = startMin - buffer_minutes;
-                    const bufferedEnd = endMin + buffer_minutes;
-
-                    const toHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-
-                    // Zkontroluj konflikty (s bufferem)
-                    const conflicts = dayEvents.filter((e: Record<string, unknown>) => {
-                      const eStart = (e.cas_od as string).split(":").slice(0, 2).map(Number).reduce((h: number, m: number, i: number) => i === 0 ? h * 60 + m : h + m, 0);
-                      const eEnd = (e.cas_do as string).split(":").slice(0, 2).map(Number).reduce((h: number, m: number, i: number) => i === 0 ? h * 60 + m : h + m, 0);
-                      return bufferedStart < eEnd && bufferedEnd > eStart;
-                    }).map((e: Record<string, unknown>) => `${e.cas_od}–${e.cas_do} ${e.popis || ""}`);
-
-                    if (conflicts.length === 0) {
-                      suggestions.push({ datum: iso, cas_od: toHHMM(startMin), cas_do: toHHMM(endMin), conflicts: [] });
-                      break; // jeden slot na den
-                    }
-                  }
-                  current.setDate(current.getDate() + 1);
-                }
-
-                const suggestionText = suggestions.length > 0
-                  ? suggestions.map((s, i) => `${i + 1}. ${s.datum} ${s.cas_od}–${s.cas_do} (buffer ${buffer_minutes}min před/po)`).join("\n")
-                  : "Žádný volný slot nenalezen v daném rozsahu.";
-
-                const ucastniciText = ucastnici.length > 0 ? `\nÚčastníci: ${ucastnici.join(", ")}` : "";
-                const result = `Smart Calendar Orchestration výsledek:\n${ucastniciText}\nDélka: ${duration_minutes} min, buffer: ${buffer_minutes} min, preferovaný čas: ${preferred_hours}\n\nDoporučené sloty:\n${suggestionText}\n\nTyp: ${typ}${poznamka ? `, popis: ${poznamka}` : ""}\n\nNabídni uživateli výběr a po potvrzení zavolej calendar_add_event.`;
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: result });
-              } else if (tool.name === "calendar_find_slot") {
-                const { from, to, duration_minutes = 60 } = parsed;
-                const toDate = to || new Date(new Date(from).getTime() + 5 * 86400000).toISOString().split("T")[0];
-                try {
-                  const gcRows = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
-                  if (!gcRows.length) throw new Error("Google Calendar není připojen");
-                  const tkRes = await fetch("https://oauth2.googleapis.com/token", {
-                    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: new URLSearchParams({ refresh_token: gcRows[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
-                  }).then(r => r.json());
-                  const gcalEvents = await fetch(
-                    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${from}T00:00:00+01:00&timeMax=${toDate}T23:59:59+01:00&singleEvents=true&orderBy=startTime`,
-                    { headers: { "Authorization": `Bearer ${tkRes.access_token}` } }
-                  ).then(r => r.json());
-                  const items = gcalEvents.items || [];
-                  const eventList = items.map((e: Record<string, unknown>) => {
-                    const s = (e.start as Record<string,string>)?.dateTime || "";
-                    const en = (e.end as Record<string,string>)?.dateTime || "";
-                    return `${s.slice(0,10)} ${s.slice(11,16)}–${en.slice(11,16)}: ${e.summary}`;
-                  }).join("\n") || "Žádné události";
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Google Calendar ${from}–${toDate}:\n${eventList}\n\nHledej volný slot pro ${duration_minutes} min.` });
-                } catch (e: unknown) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba čtení kalendáře: ${e instanceof Error ? e.message : String(e)}` });
-                }
-              } else if (tool.name === "calendar_list_events") {
-                const now = new Date();
-                const defaultFrom = new Date(now.getTime() - 21 * 86400000).toISOString().split("T")[0];
-                const defaultTo = new Date(now.getTime() + 365 * 86400000).toISOString().split("T")[0];
-                const fromDate = parsed.from || defaultFrom;
-                const toDate = parsed.to || defaultTo;
-                const maxResults = Math.min(parsed.max_results || 100, 500);
-                try {
-                  const gcR = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider='google_calendar'`;
-                  const tk = await fetch("https://oauth2.googleapis.com/token", {
-                    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: new URLSearchParams({ refresh_token: gcR[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
-                  }).then(r => r.json());
-                  const evs = await fetch(
-                    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(fromDate+"T00:00:00+01:00")}&timeMax=${encodeURIComponent(toDate+"T23:59:59+01:00")}&singleEvents=true&orderBy=startTime&maxResults=${maxResults}`,
-                    { headers: { Authorization: `Bearer ${tk.access_token}` } }
-                  ).then(r => r.json());
-                  const items = evs.items || [];
-                  if (!items.length) {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Žádné události ${fromDate}–${toDate}.` });
-                  } else {
-                    const list = items.map((e: Record<string,unknown>) => {
-                      const s = (e.start as Record<string,string>)?.dateTime || (e.start as Record<string,string>)?.date || "";
-                      const en = (e.end as Record<string,string>)?.dateTime || (e.end as Record<string,string>)?.date || "";
-                      return `ID: ${e.id} | ${s.slice(0,10)} ${s.length>10 ? s.slice(11,16) : ""}–${en.length>10 ? en.slice(11,16) : ""} | ${e.summary}`;
-                    }).join("\n");
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Události ${fromDate}–${toDate} (${items.length}):\n${list}` });
-                  }
-                } catch (e: unknown) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e instanceof Error ? e.message : String(e)}` });
-                }
-              } else if (tool.name === "calendar_delete_event") {
-                const { id, gcal_event_id } = parsed;
-                // Smaž z DB
-                // Smaž z Google Calendar přímo
-                try {
-                  const rows = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
-                  if (!rows.length) throw new Error("Google Calendar není připojen");
-                  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: new URLSearchParams({ refresh_token: rows[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
-                  }).then(r => r.json());
-                  const eventId = gcal_event_id;
-                  await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(eventId))}`, {
-                    method: "DELETE", headers: { "Authorization": `Bearer ${tokenRes.access_token}` },
-                  });
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `✅ Událost smazána z Google Calendar.` });
-                } catch (e: unknown) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba mazání: ${e instanceof Error ? e.message : String(e)}` });
-                }
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
-              } else if (tool.name === "calendar_add_event") {
-                // Zapisuje POUZE do Google Calendar
-                try {
-                  const GCAL_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
-                  const GCAL_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET!;
-                  const rows = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
-                  if (!rows.length) throw new Error("Google Calendar není připojen");
-                  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: new URLSearchParams({ refresh_token: rows[0].refresh_token, client_id: GCAL_CLIENT_ID, client_secret: GCAL_CLIENT_SECRET, grant_type: "refresh_token" }),
-                  }).then(r => r.json());
-                  const accessToken = tokenRes.access_token;
-                  const start = new Date(`${parsed.datum}T${parsed.cas_od}:00+01:00`).toISOString();
-                  const end = new Date(`${parsed.datum}T${parsed.cas_do}:00+01:00`).toISOString();
-                  const gcalRes = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
-                    method: "POST",
-                    headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      summary: parsed.popis,
-                      description: parsed.klient_jmeno ? `Klient: ${parsed.klient_jmeno}` : undefined,
-                      location: parsed.mistnost || undefined,
-                      start: { dateTime: start, timeZone: "Europe/Prague" },
-                      end: { dateTime: end, timeZone: "Europe/Prague" },
-                    }),
-                  }).then(r => r.json());
-                  if (gcalRes.id) {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `✅ Schůzka "${parsed.popis}" přidána do Google Calendar: ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}` });
-                  } else {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba Google Calendar: ${gcalRes.error?.message || JSON.stringify(gcalRes)}` });
-                  }
-                } catch (e: unknown) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e instanceof Error ? e.message : String(e)}` });
-                }
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
-              } else if (tool.name === "add_dashboard_note") {
-                const { nadpis, obsah, typ = "info", zdroj } = parsed;
-                try {
-                  const notesBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-                  await fetch(`${notesBaseUrl}/api/poznamky`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ nadpis, obsah, typ, zdroj }),
-                  });
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Poznámka "${nadpis}" přidána na dashboard.` });
-                } catch {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Chyba při ukládání poznámky." });
-                }
-              } else if (tool.name === "read_emails") {
-                const { limit = 10 } = parsed;
-                const AGENTMAIL_KEY = "am_us_5470aed899ab47715f9a150e06e4e579b90eca41997a43da38055f8d2d1c7b9d";
-                const INBOX = "albedo_ai_agnet@agentmail.to";
-                try {
-                  const res = await fetch(`https://api.agentmail.to/v0/inboxes/${INBOX}/messages?limit=${limit}`, {
-                    headers: { "Authorization": `Bearer ${AGENTMAIL_KEY}` },
-                  }).then(r => r.json());
-                  const messages = res.messages || res || [];
-                  if (!messages.length) {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Inbox je prázdný." });
-                  } else {
-                    const text = messages.map((m: Record<string, unknown>, i: number) =>
-                      `${i + 1}. Od: ${m.from || "?"} | Předmět: ${m.subject || "(bez předmětu)"} | ${m.date || m.created_at || ""}\n   ${String(m.text || m.body || "").slice(0, 300)}`
-                    ).join("\n\n");
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Emaily v inboxu (${messages.length}):\n\n${text}\n\nPokud emaily obsahují schůzky, použij smart_calendar_orchestrate pro naplánování bez konfliktů.` });
-                  }
-                } catch (e: unknown) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba čtení emailů: ${e instanceof Error ? e.message : String(e)}` });
-                }
-              } else if (tool.name === "enrich_property") {
-                const { nemovitost_id, adresa, lokalita, typ, dispozice, cena_kc, plocha_m2 } = parsed;
-                // Načti aktuální data z DB
-                const propData = await sql`SELECT * FROM nemovitosti WHERE id = ${nemovitost_id}`;
-                const prop = propData[0] as Record<string, unknown> | undefined;
-                if (!prop) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Nemovitost ID ${nemovitost_id} nenalezena.` });
-                } else {
-                  // Odhad roku výstavby dle lokality a ceny (heuristika pro Praha)
-                  const cena = Number(cena_kc || prop.cena_kc || 0);
-                  const plocha = Number(plocha_m2 || prop.plocha_m2 || 60);
-                  const cenaM2 = plocha > 0 ? Math.round(cena / plocha) : 0;
-                  const loc = (lokalita || prop.lokalita || "").toString().toLowerCase();
-
-                  let odhadRoku = 1980;
-                  if (cenaM2 > 150000) odhadRoku = 2015;
-                  else if (cenaM2 > 100000) odhadRoku = 2005;
-                  else if (cenaM2 > 70000) odhadRoku = 1995;
-                  else if (loc.includes("vinohrady") || loc.includes("žižkov") || loc.includes("smíchov")) odhadRoku = 1920;
-                  else if (loc.includes("holešovice") || loc.includes("karlín")) odhadRoku = 1960;
-
-                  const enriched = {
-                    rok_vystavby: prop.rok_vystavby || odhadRoku,
-                    rekonstrukce_rok: prop.rekonstrukce_rok || (odhadRoku < 2000 ? odhadRoku + 20 : null),
-                    rekonstrukce_popis: prop.rekonstrukce_popis || (odhadRoku < 2000 ? "Částečná rekonstrukce (kuchyně, koupelna)" : "Novostavba, bez rekonstrukce"),
-                    stavebni_upravy: prop.stavebni_upravy || `${typ || prop.typ || "Byt"} ${dispozice || prop.dispozice || ""}, standardní provedení, ${loc || "Praha"}`,
-                  };
-
-                  // Ulož do DB
-                  await sql`UPDATE nemovitosti SET
-                    rok_vystavby = COALESCE(rok_vystavby, ${enriched.rok_vystavby}),
-                    rekonstrukce_rok = COALESCE(rekonstrukce_rok, ${enriched.rekonstrukce_rok}),
-                    rekonstrukce_popis = COALESCE(rekonstrukce_popis, ${enriched.rekonstrukce_popis}),
-                    stavebni_upravy = COALESCE(stavebni_upravy, ${enriched.stavebni_upravy})
-                    WHERE id = ${nemovitost_id}`;
-
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Data Enrichment dokončen pro nemovitost ID ${nemovitost_id} (${prop.nazev}):\n- Rok výstavby: ${enriched.rok_vystavby}\n- Rekonstrukce: ${enriched.rekonstrukce_rok || "N/A"} — ${enriched.rekonstrukce_popis}\n- Stavební úpravy: ${enriched.stavebni_upravy}\nData uložena do DB.` });
-                }
-              } else if (tool.name === "web_search") {
-                const { query, count = 8 } = parsed;
-                const BRAVE_KEY = process.env.BRAVE_API_KEY;
-                if (!BRAVE_KEY) {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Brave API key není nastaven." });
-                } else {
-                  try {
-                    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=cz&search_lang=cs`, {
-                      headers: { "Accept": "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": BRAVE_KEY },
-                    }).then(r => r.json());
-                    const results = res?.web?.results || [];
-                    if (results.length === 0) {
-                      toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Žádné výsledky." });
-                    } else {
-                      const text = results.map((r: Record<string, unknown>, i: number) =>
-                        `${i + 1}. ${r.title}\n   ${r.description || ""}\n   ${r.url}`
-                      ).join("\n\n");
-                      toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Výsledky pro "${query}":\n\n${text}` });
-                    }
-                  } catch (e: unknown) {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba vyhledávání: ${e instanceof Error ? e.message : String(e)}` });
-                  }
-                }
-              } else if (tool.name === "competitive_intelligence") {
-                const { lokalita, typ, dispozice, nase_cena } = parsed;
-                const BRAVE_KEY = process.env.BRAVE_API_KEY;
-
-                // Brave Search — skutečné výsledky z trhu
-                let braveResults = "";
-                if (BRAVE_KEY) {
-                  const query = `${typ || "byt"} ${dispozice || ""} prodej ${lokalita} cena Kč site:sreality.cz OR site:bezrealitky.cz`;
-                  try {
-                    const braveRes = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8&country=cz&search_lang=cs`, {
-                      headers: { "Accept": "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": BRAVE_KEY },
-                    }).then(r => r.json());
-                    const results = braveRes?.web?.results || [];
-                    if (results.length > 0) {
-                      braveResults = "\n🔍 Aktuální nabídky na trhu (Brave Search):\n";
-                      results.slice(0, 6).forEach((r: Record<string, unknown>) => {
-                        braveResults += `- ${r.title}\n  ${r.description || ""}\n  ${r.url}\n`;
-                      });
-                    }
-                  } catch { braveResults = ""; }
-                }
-
-                // Naše nemovitosti ve stejné lokalitě
-                const naseNem = await sql`
-                  SELECT nazev, dispozice, cena_kc, plocha_m2, stav,
-                    CASE WHEN plocha_m2 > 0 THEN ROUND(cena_kc::numeric / plocha_m2) ELSE 0 END as cena_m2
-                  FROM nemovitosti
-                  WHERE LOWER(lokalita) LIKE ${`%${lokalita.toLowerCase()}%`}
-                    AND stav = 'k prodeji'
-                  LIMIT 10
-                `;
-
-                let report = `Competitive Intelligence — ${lokalita} (${typ || "byt"} ${dispozice || ""})\n`;
-                if (nase_cena) report += `Naše cena k porovnání: ${Number(nase_cena).toLocaleString("cs-CZ")} Kč\n`;
-
-                if (naseNem.length > 0) {
-                  report += `\n🏠 Naše nabídky v lokalitě:\n`;
-                  naseNem.forEach((n: Record<string, unknown>) => {
-                    report += `- ${n.nazev} ${n.dispozice || ""}: ${Number(n.cena_kc).toLocaleString("cs-CZ")} Kč (${Number(n.cena_m2).toLocaleString("cs-CZ")} Kč/m²)\n`;
-                  });
-                }
-
-                report += braveResults;
-                report += `\n🔗 Přímé vyhledávání:\n- https://www.sreality.cz/hledani/prodej/${typ === "dům" ? "domy" : "byty"}?region=${encodeURIComponent(lokalita)}\n- https://www.bezrealitky.cz/vyhledat?offerType=PRODEJ&query=${encodeURIComponent(lokalita)}`;
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: report });
-              } else if (tool.name === "create_document") {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ document: parsed })}\n\n`));
-                // Automatický upload do Google Drive pokud je to PDF nebo DOCX
-                if (parsed.format === "pdf" || parsed.format === "docx" || parsed.format === "xlsx") {
-                  try {
-                    const docBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-                    const genRes = await fetch(`${docBaseUrl}/api/generate`, {
-                      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
-                    });
-                    const contentType = genRes.headers.get("content-type") || "";
-                    const buf = await genRes.arrayBuffer();
-                    const base64 = Buffer.from(buf).toString("base64");
-                    const ext = parsed.format === "pdf" ? "html" : parsed.format;
-                    const filename = `${parsed.title || "dokument"}.${ext}`;
-                    const APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbys7cHeej0mo7sYmxuL60NAKkGpTVO-zUeZ2vHT5u0vigwPA-7zlsuxkcJ78ABf8_H4/exec";
-                    const body = new URLSearchParams();
-                    body.set("name", filename);
-                    body.set("type", contentType.split(";")[0]);
-                    body.set("data", base64);
-                    await fetch(APPS_SCRIPT, { method: "POST", body, redirect: "follow" });
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Dokument "${filename}" připraven ke stažení a nahrán do Google Drive.` });
-                  } catch {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Dokument připraven ke stažení (upload do Drive selhal)." });
-                  }
-                } else {
-                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Dokument připraven ke stažení." });
+            if (lastAssistant) {
+              const o = JSON.parse(lastAssistant);
+              const tsRaw = o.timestamp || o.ts || "";
+              const msgTime = tsRaw ? new Date(tsRaw).getTime() : 0;
+              // Pouze zprávy novější než start
+              if (msgTime > startTime - 3000) {
+                const text = (o.message.content || [])
+                  .filter((c: { type: string }) => c.type === "text")
+                  .map((c: { text: string }) => c.text)
+                  .join("");
+                if (text && !text.includes("HEARTBEAT_OK")) {
+                  response = text;
+                  break;
                 }
               }
-            } catch (toolErr: unknown) {
-              const errMsg = toolErr instanceof Error ? toolErr.message : String(toolErr);
-              console.error(`Tool ${tool.name} error:`, errMsg);
-              toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba nástroje ${tool.name}: ${errMsg}` });
             }
-          }
-
-          if (toolResults.length > 0) {
-            messages.push({ role: "user", content: toolResults });
-          }
+          } catch { /* ignoruj */ }
         }
+
+        if (!response) throw new Error("Timeout — Pepa neodpověděl včas");
+
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: response })}\n\n`));
+        controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `❌ Chyba: ${msg}` })}\n\n`));
+        controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
       }
-
-      // Pošli na Telegram
-      await sendToTelegram(message, fullResponse);
-
-      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
       controller.close();
     },
   });
@@ -860,8 +102,7 @@ export async function POST(req: NextRequest) {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+      "Connection": "keep-alive",
     },
   });
 }
-
