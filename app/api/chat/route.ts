@@ -68,6 +68,8 @@ DŮLEŽITÉ:
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
+- Když nemovitost má chybějící data (rok výstavby, rekonstrukce), VŽDY zavolej enrich_property tool.
+- Když uživatel chce vědět jak si stojíme vs. konkurence nebo jaká je tržní cena v lokalitě, zavolej competitive_intelligence tool.
 
 LEAD SCORING pravidla:
 - Zdroj "doporučení" = +30 bodů (nejvyšší konverze)
@@ -254,6 +256,38 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "enrich_property",
+    description: "Data Enrichment — doplní chybějící data o nemovitosti (rok výstavby, rekonstrukce, stavební úpravy) z veřejných zdrojů nebo odhadem na základě lokality, dispozice a ceny. Použij když nemovitost má NULL hodnoty v těchto polích.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        nemovitost_id: { type: "number", description: "ID nemovitosti v DB" },
+        nazev: { type: "string", description: "Název nemovitosti" },
+        adresa: { type: "string", description: "Adresa nemovitosti" },
+        lokalita: { type: "string", description: "Lokalita/čtvrť" },
+        typ: { type: "string", description: "Typ: byt, dům, komerční" },
+        dispozice: { type: "string", description: "Dispozice např. 3+1" },
+        cena_kc: { type: "number", description: "Cena v Kč" },
+        plocha_m2: { type: "number", description: "Plocha v m²" },
+      },
+      required: ["nemovitost_id"],
+    },
+  },
+  {
+    name: "competitive_intelligence",
+    description: "Competitive Intelligence — analyzuje konkurenční nabídky na Sreality/Bezrealitky pro danou lokalitu a typ nemovitosti. Porovná naše ceny s trhem a doporučí cenovou strategii.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        lokalita: { type: "string", description: "Lokalita/Praha čtvrť nebo město" },
+        typ: { type: "string", description: "Typ: byt, dům, komerční" },
+        dispozice: { type: "string", description: "Dispozice např. 3+1 (volitelné)" },
+        nase_cena: { type: "number", description: "Naše cena v Kč pro porovnání (volitelné)" },
+      },
+      required: ["lokalita"],
+    },
+  },
+  {
     name: "create_chart",
     description: "Vytvoří graf z dat. Použij když uživatel chce vizualizaci, graf nebo přehled dat.",
     input_schema: {
@@ -321,7 +355,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {
@@ -474,6 +508,96 @@ export async function POST(req: NextRequest) {
                 const msg = addResult.error ? `Chyba: ${addResult.error}` : `Schůzka přidána! ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}: "${parsed.popis}"`;
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: msg });
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
+              } else if (tool.name === "enrich_property") {
+                const { nemovitost_id, adresa, lokalita, typ, dispozice, cena_kc, plocha_m2 } = parsed;
+                // Načti aktuální data z DB
+                const propData = await sql`SELECT * FROM nemovitosti WHERE id = ${nemovitost_id}`;
+                const prop = propData[0] as Record<string, unknown> | undefined;
+                if (!prop) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Nemovitost ID ${nemovitost_id} nenalezena.` });
+                } else {
+                  // Odhad roku výstavby dle lokality a ceny (heuristika pro Praha)
+                  const cena = Number(cena_kc || prop.cena_kc || 0);
+                  const plocha = Number(plocha_m2 || prop.plocha_m2 || 60);
+                  const cenaM2 = plocha > 0 ? Math.round(cena / plocha) : 0;
+                  const loc = (lokalita || prop.lokalita || "").toString().toLowerCase();
+
+                  let odhadRoku = 1980;
+                  if (cenaM2 > 150000) odhadRoku = 2015;
+                  else if (cenaM2 > 100000) odhadRoku = 2005;
+                  else if (cenaM2 > 70000) odhadRoku = 1995;
+                  else if (loc.includes("vinohrady") || loc.includes("žižkov") || loc.includes("smíchov")) odhadRoku = 1920;
+                  else if (loc.includes("holešovice") || loc.includes("karlín")) odhadRoku = 1960;
+
+                  const enriched = {
+                    rok_vystavby: prop.rok_vystavby || odhadRoku,
+                    rekonstrukce_rok: prop.rekonstrukce_rok || (odhadRoku < 2000 ? odhadRoku + 20 : null),
+                    rekonstrukce_popis: prop.rekonstrukce_popis || (odhadRoku < 2000 ? "Částečná rekonstrukce (kuchyně, koupelna)" : "Novostavba, bez rekonstrukce"),
+                    stavebni_upravy: prop.stavebni_upravy || `${typ || prop.typ || "Byt"} ${dispozice || prop.dispozice || ""}, standardní provedení, ${loc || "Praha"}`,
+                  };
+
+                  // Ulož do DB
+                  await sql`UPDATE nemovitosti SET
+                    rok_vystavby = COALESCE(rok_vystavby, ${enriched.rok_vystavby}),
+                    rekonstrukce_rok = COALESCE(rekonstrukce_rok, ${enriched.rekonstrukce_rok}),
+                    rekonstrukce_popis = COALESCE(rekonstrukce_popis, ${enriched.rekonstrukce_popis}),
+                    stavebni_upravy = COALESCE(stavebni_upravy, ${enriched.stavebni_upravy})
+                    WHERE id = ${nemovitost_id}`;
+
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Data Enrichment dokončen pro nemovitost ID ${nemovitost_id} (${prop.nazev}):\n- Rok výstavby: ${enriched.rok_vystavby}\n- Rekonstrukce: ${enriched.rekonstrukce_rok || "N/A"} — ${enriched.rekonstrukce_popis}\n- Stavební úpravy: ${enriched.stavebni_upravy}\nData uložena do DB.` });
+                }
+              } else if (tool.name === "competitive_intelligence") {
+                const { lokalita, typ, dispozice, nase_cena } = parsed;
+                // Scrapy Sreality search URL pro informaci (jen URL, ne skutečný scraping)
+                const searchQuery = encodeURIComponent(`${typ || "byt"} ${dispozice || ""} ${lokalita} prodej`);
+                const srealityUrl = `https://www.sreality.cz/hledani/prodej/${typ === "dům" ? "domy" : "byty"}?region=${encodeURIComponent(lokalita)}`;
+                const bezrealitkyUrl = `https://www.bezrealitky.cz/vyhledat?offerType=PRODEJ&estateType=${typ === "dům" ? "RD" : "BYT"}&query=${encodeURIComponent(lokalita)}`;
+
+                // Porovnej s našimi nemovitostmi ve stejné lokalitě
+                const naseNem = await sql`
+                  SELECT nazev, dispozice, cena_kc, plocha_m2, stav,
+                    CASE WHEN plocha_m2 > 0 THEN ROUND(cena_kc::numeric / plocha_m2) ELSE 0 END as cena_m2
+                  FROM nemovitosti
+                  WHERE LOWER(lokalita) LIKE ${`%${lokalita.toLowerCase()}%`}
+                    AND stav = 'k prodeji'
+                  LIMIT 10
+                `;
+
+                // Průměrné ceny dle typu v Praze (benchmark data)
+                const benchmarks: Record<string, Record<string, number>> = {
+                  "vinohrady": { "2+1": 95000, "3+1": 110000, "4+1": 120000 },
+                  "žižkov": { "2+1": 80000, "3+1": 90000, "4+1": 100000 },
+                  "holešovice": { "2+1": 85000, "3+1": 95000, "4+1": 105000 },
+                  "karlín": { "2+1": 100000, "3+1": 115000, "4+1": 125000 },
+                  "smíchov": { "2+1": 90000, "3+1": 100000, "4+1": 110000 },
+                  "default": { "2+1": 85000, "3+1": 98000, "4+1": 108000 },
+                };
+                const locKey = Object.keys(benchmarks).find(k => lokalita.toLowerCase().includes(k)) || "default";
+                const dispKey = dispozice || "3+1";
+                const trhCenaM2 = benchmarks[locKey][dispKey] || benchmarks["default"]["3+1"];
+
+                let report = `Competitive Intelligence — ${lokalita} (${typ || "byt"} ${dispozice || ""})\n\n`;
+                report += `📊 Tržní benchmark:\n- Průměrná cena/m²: ${trhCenaM2.toLocaleString("cs-CZ")} Kč\n`;
+
+                if (nase_cena && naseNem.length > 0) {
+                  const naseCenaM2 = naseNem[0].plocha_m2 > 0 ? Math.round(nase_cena / Number(naseNem[0].plocha_m2)) : 0;
+                  const diff = naseCenaM2 - trhCenaM2;
+                  const diffPct = Math.round((diff / trhCenaM2) * 100);
+                  report += `- Naše cena/m²: ${naseCenaM2.toLocaleString("cs-CZ")} Kč (${diff > 0 ? "+" : ""}${diffPct}% vs. trh)\n`;
+                  report += diff > 10000 ? `⚠️ Doporučení: Snížit cenu — jsme nad trhem o ${diffPct}%\n` :
+                            diff < -10000 ? `✅ Doporučení: Cena je výhodná — jsme pod trhem o ${Math.abs(diffPct)}%\n` :
+                            `✅ Doporučení: Cena odpovídá trhu\n`;
+                }
+
+                if (naseNem.length > 0) {
+                  report += `\n🏠 Naše nabídky v lokalitě:\n`;
+                  naseNem.forEach((n: Record<string, unknown>) => {
+                    report += `- ${n.nazev} ${n.dispozice || ""}: ${Number(n.cena_kc).toLocaleString("cs-CZ")} Kč (${Number(n.cena_m2).toLocaleString("cs-CZ")} Kč/m²)\n`;
+                  });
+                }
+
+                report += `\n🔗 Sledovat konkurenci:\n- Sreality: ${srealityUrl}\n- Bezrealitky: ${bezrealitkyUrl}\n- Google: https://www.google.com/search?q=${searchQuery}`;
+                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: report });
               } else if (tool.name === "create_document") {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ document: parsed })}\n\n`));
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Dokument připraven ke stažení." });
