@@ -193,6 +193,18 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "calendar_delete_event",
+    description: "Smaže událost z kalendáře (DB i Google Calendar). Použij když uživatel chce smazat schůzku.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "number", description: "ID události v DB (z sql_query)" },
+        gcal_event_id: { type: "string", description: "Google Calendar event ID (volitelné)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "smart_calendar_orchestrate",
     description: "Smart Calendar Orchestration — najde nejlepší volný slot pro schůzku s více účastníky, respektuje buffer časy mezi schůzkami a kontroluje konflikty. Použij když uživatel chce naplánovat schůzku s klientem nebo více lidmi.",
     input_schema: {
@@ -402,7 +414,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", calendar_delete_event: "🗑️ Mažu událost...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {
@@ -548,6 +560,27 @@ export async function POST(req: NextRequest) {
                 const toDate = to || new Date(new Date(from).getTime() + 5 * 86400000).toISOString().split("T")[0];
                 const slots = await runSQL(`SELECT datum, cas_od, cas_do, obsazeno, popis, klient_jmeno, typ FROM kalendar WHERE datum >= '${from}' AND datum <= '${toDate}' ORDER BY datum, cas_od`);
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Kalendář ${from}–${toDate}:\n${slots}\n\nHledaná délka: ${duration_minutes} min. Volné sloty = obsazeno=false.` });
+              } else if (tool.name === "calendar_delete_event") {
+                const { id, gcal_event_id } = parsed;
+                // Smaž z DB
+                await sql`DELETE FROM kalendar WHERE id = ${id}`;
+                // Smaž z Google Calendar
+                let gcalDelMsg = "";
+                try {
+                  const calBase = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                  // Získej gcal_event_id z DB pokud není předán
+                  let eventId = gcal_event_id;
+                  if (!eventId) {
+                    const rows = await sql`SELECT gcal_event_id FROM kalendar WHERE id = ${id}`;
+                    eventId = rows[0]?.gcal_event_id;
+                  }
+                  if (eventId) {
+                    await fetch(`${calBase}/api/gcal/event?id=${encodeURIComponent(eventId)}`, { method: "DELETE" });
+                    gcalDelMsg = " | 🗑️ Smazáno i z Google Calendar";
+                  }
+                } catch { /* tiché selhání */ }
+                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Událost ID ${id} smazána z DB${gcalDelMsg}.` });
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
               } else if (tool.name === "calendar_add_event") {
                 const calBase = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
                 const addResult = await fetch(`${calBase}/api/calendar`, {
@@ -559,7 +592,13 @@ export async function POST(req: NextRequest) {
                   const gcalResult = await fetch(`${calBase}/api/gcal/event`, {
                     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
                   }).then(r => r.json());
-                  if (gcalResult.ok) gcalMsg = ` | 📅 Přidáno i do Google Calendar`;
+                  if (gcalResult.ok) {
+                    gcalMsg = ` | 📅 Přidáno i do Google Calendar`;
+                    // Ulož gcal event ID do DB
+                    if (addResult.id && gcalResult.id) {
+                      await sql`UPDATE kalendar SET gcal_event_id = ${gcalResult.id} WHERE id = ${addResult.id}`;
+                    }
+                  }
                 } catch { /* Google Calendar nemusí být připojen */ }
                 const msg = addResult.error ? `Chyba: ${addResult.error}` : `Schůzka přidána! ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}: "${parsed.popis}"${gcalMsg}`;
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: msg });

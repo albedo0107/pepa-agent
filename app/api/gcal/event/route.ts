@@ -27,6 +27,21 @@ async function getAccessToken(): Promise<string> {
   return token.access_token;
 }
 
+export async function DELETE(req: NextRequest) {
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "Chybí id" }, { status: 400 });
+    const accessToken = await getAccessToken();
+    await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${accessToken}` },
+    });
+    return NextResponse.json({ ok: true });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { datum, cas_od, cas_do, popis, klient_jmeno, mistnost } = await req.json();
