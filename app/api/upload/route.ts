@@ -12,7 +12,6 @@ export async function POST(req: NextRequest) {
     }
 
     const blob = await put(`pepa-uploads/${Date.now()}-${file.name}`, file, {
-      access: "public",
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
