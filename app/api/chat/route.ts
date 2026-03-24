@@ -66,7 +66,7 @@ Příští týden: ${new Date(Date.now() + 7 * 86400000).toISOString().split("T"
 DŮLEŽITÉ:
 - Volej sql_query MAX 1x na dotaz — zahrň vše do jednoho dotazu.
 - Nikdy neopakuj "Perfektní!", "Výborně!" apod. před každou akcí. Jen jednou na začátku max.
-- Máš PLNÝ přístup k Google Calendar uživatele přes OAuth. Použij calendar_add_event pro přidání a calendar_delete_event pro mazání. Píšeš PŘÍMO do Google Calendar — žádná DB, žádné potvrzení. Pro čtení kalendáře použij sql_query na tabulku kalendar NEBO se zeptej uživatele na datum.
+- Máš PLNÝ přístup k Google Calendar uživatele přes OAuth. Použij calendar_add_event pro přidání a calendar_delete_event pro mazání. Píšeš PŘÍMO do Google Calendar. Pro čtení/hledání volných termínů VŽDY použij calendar_find_slot — ten čte přímo z Google Calendar API. NIKDY nepoužívej sql_query na tabulku kalendar pro kalendářové operace.
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
@@ -91,10 +91,9 @@ DB tabulky:
 - nemovitosti (id, nazev, adresa, lokalita, typ, dispozice, cena_kc, stav, plocha_m2, rok_vystavby, rekonstrukce_rok, rekonstrukce_popis, stavebni_upravy)
 - leady (id, jmeno, email, zdroj, datum, nemovitost_id, stav)
 - prodeje (id, nemovitost_id, klient_id, datum_prodeje, cena_prodeje, provize_kc)
-- kalendar (id, datum, cas_od, cas_do, typ, popis, obsazeno)
 - soubory (id, nazev, typ, velikost, obsah TEXT, obsah_base64, nahrano_at) — nahrané soubory uživatelem; obsah = text/CSV, obsah_base64 = binární soubory
 - obchodnici (id, jmeno, email, telefon) — 5 obchodníků firmy
-- kalendar.mistnost — zasedací místnost pro událost (hlavní: "Zasedací místnost Vojty Žižky")
+- Zasedací místnost: "Zasedací místnost Vojty Žižky" — zadávej do location při calendar_add_event
 
 AgentMail inbox: albedo_ai_agnet@agentmail.to — přes read_emails tool.
 Při čtení emailů: detekuj schůzky, termíny a požadavky → naplánuj přes smart_calendar_orchestrate → zkontroluj konflikt místnosti.
@@ -479,13 +478,27 @@ export async function POST(req: NextRequest) {
                 const prefStartMin = prefStartH * 60 + (prefStartM || 0);
                 const prefEndMin = prefEndH * 60 + (prefEndM || 0);
 
-                // Načti obsazené sloty
-                const existingRaw = await sql`
-                  SELECT datum::text, cas_od, cas_do, popis, klient_jmeno
-                  FROM kalendar
-                  WHERE datum >= ${from} AND datum <= ${toDate} AND obsazeno = true
-                  ORDER BY datum, cas_od
-                `;
+                // Načti obsazené sloty z Google Calendar
+                let existingRaw: Record<string, unknown>[] = [];
+                try {
+                  const gcRows2 = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
+                  if (gcRows2.length) {
+                    const tk2 = await fetch("https://oauth2.googleapis.com/token", {
+                      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                      body: new URLSearchParams({ refresh_token: gcRows2[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
+                    }).then(r => r.json());
+                    const gcItems = await fetch(
+                      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${from}T00:00:00+01:00&timeMax=${toDate}T23:59:59+01:00&singleEvents=true`,
+                      { headers: { "Authorization": `Bearer ${tk2.access_token}` } }
+                    ).then(r => r.json());
+                    existingRaw = (gcItems.items || []).map((e: Record<string, unknown>) => ({
+                      datum: ((e.start as Record<string,string>)?.dateTime || "").slice(0, 10),
+                      cas_od: ((e.start as Record<string,string>)?.dateTime || "").slice(11, 16),
+                      cas_do: ((e.end as Record<string,string>)?.dateTime || "").slice(11, 16),
+                      popis: e.summary,
+                    }));
+                  }
+                } catch { existingRaw = []; }
 
                 // Najdi volné sloty s bufferem
                 const suggestions: { datum: string; cas_od: string; cas_do: string; conflicts: string[] }[] = [];
@@ -529,8 +542,27 @@ export async function POST(req: NextRequest) {
               } else if (tool.name === "calendar_find_slot") {
                 const { from, to, duration_minutes = 60 } = parsed;
                 const toDate = to || new Date(new Date(from).getTime() + 5 * 86400000).toISOString().split("T")[0];
-                const slots = await runSQL(`SELECT datum, cas_od, cas_do, obsazeno, popis, klient_jmeno, typ FROM kalendar WHERE datum >= '${from}' AND datum <= '${toDate}' ORDER BY datum, cas_od`);
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Kalendář ${from}–${toDate}:\n${slots}\n\nHledaná délka: ${duration_minutes} min. Volné sloty = obsazeno=false.` });
+                try {
+                  const gcRows = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider = 'google_calendar'`;
+                  if (!gcRows.length) throw new Error("Google Calendar není připojen");
+                  const tkRes = await fetch("https://oauth2.googleapis.com/token", {
+                    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: new URLSearchParams({ refresh_token: gcRows[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
+                  }).then(r => r.json());
+                  const gcalEvents = await fetch(
+                    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${from}T00:00:00+01:00&timeMax=${toDate}T23:59:59+01:00&singleEvents=true&orderBy=startTime`,
+                    { headers: { "Authorization": `Bearer ${tkRes.access_token}` } }
+                  ).then(r => r.json());
+                  const items = gcalEvents.items || [];
+                  const eventList = items.map((e: Record<string, unknown>) => {
+                    const s = (e.start as Record<string,string>)?.dateTime || "";
+                    const en = (e.end as Record<string,string>)?.dateTime || "";
+                    return `${s.slice(0,10)} ${s.slice(11,16)}–${en.slice(11,16)}: ${e.summary}`;
+                  }).join("\n") || "Žádné události";
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Google Calendar ${from}–${toDate}:\n${eventList}\n\nHledej volný slot pro ${duration_minutes} min.` });
+                } catch (e: unknown) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba čtení kalendáře: ${e instanceof Error ? e.message : String(e)}` });
+                }
               } else if (tool.name === "calendar_delete_event") {
                 const { id, gcal_event_id } = parsed;
                 // Smaž z DB
