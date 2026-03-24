@@ -157,9 +157,11 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
         setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${json.error || "neznámá chyba"}` }]);
         return;
       }
-      const { url, name, size } = json;
-      const sizeFmt = size > 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.round(size / 1024)} KB`;
-      await sendMessage(`Nahrál jsem soubor: **${name}** (${sizeFmt})\nURL: ${url}\n\nMůžeš tento soubor zpracovat?`);
+      const { name, sizeFmt, content } = json;
+      const msg = content
+        ? `Nahrál jsem soubor: **${name}** (${sizeFmt})\n\nObsah:\n\`\`\`\n${content}\n\`\`\`\n\nZpracuj tento soubor — importuj data, vyhodnoť leady, ulož do DB.`
+        : `Nahrál jsem soubor: **${name}** (${sizeFmt}) — binární soubor, nelze přečíst přímo. Nahraj CSV nebo TXT.`;
+      await sendMessage(msg);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "neznámá chyba";
       setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${msg}` }]);
