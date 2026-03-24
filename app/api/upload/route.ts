@@ -19,9 +19,13 @@ export async function POST(req: NextRequest) {
     const res = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       body,
+      redirect: "follow",
+      headers: { "Accept": "application/json" },
     });
 
-    const json = await res.json();
+    const text = await res.text();
+    let json: { ok?: boolean; id?: string; name?: string };
+    try { json = JSON.parse(text); } catch { return NextResponse.json({ error: `Script error: ${text.slice(0, 200)}` }, { status: 500 }); }
     if (!json.ok) return NextResponse.json({ error: "Upload selhal" }, { status: 500 });
 
     const sizeFmt = file.size > 1024 * 1024
