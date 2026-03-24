@@ -160,7 +160,7 @@ export default function Dashboard() {
 
       {/* Pravý panel — Chat */}
       <div className={`${mobileTab === "chat" ? "flex" : "hidden"} md:flex flex-1 overflow-hidden flex-col`}>
-        <ChatApp embedded onCalendarUpdate={() => setCalRefresh(r => r + 1)} />
+        <ChatApp embedded scrollOnMount={mobileTab === "chat"} onCalendarUpdate={() => setCalRefresh(r => r + 1)} />
       </div>
       </div>
     </div>

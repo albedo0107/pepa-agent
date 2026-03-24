@@ -86,11 +86,13 @@ function renderContent(text: string) {
     .replace(/\n/g, "<br/>");
 }
 
-export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedded?: boolean; onCalendarUpdate?: () => void }) {
+export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMount = false }: { embedded?: boolean; onCalendarUpdate?: () => void; scrollOnMount?: boolean }) {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MSG]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Extras se aplikují na poslední zprávu po [DONE]
   const extrasRef = useRef<Partial<Message>>({});
@@ -121,6 +123,25 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Scroll na bottom při mount (když user přepne na chat tab)
+  useEffect(() => {
+    if (scrollOnMount) {
+      bottomRef.current?.scrollIntoView({ behavior: "instant" });
+    }
+  }, [scrollOnMount]);
+
+  // Detekce scrollu — zobraz šipku dolů když jsme daleko od konce
+  const handleScroll = useCallback(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBtn(distFromBottom > 200);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
   const clearHistory = useCallback(() => {
     setMessages([WELCOME_MSG]);
@@ -231,7 +252,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
   };
 
   return (
-    <div className={`flex flex-col ${embedded ? "h-screen" : "h-screen"} text-gray-100`} style={{ background: embedded ? "transparent" : "linear-gradient(135deg, #0f1a1c 0%, #0d1f2d 100%)" }} suppressHydrationWarning>
+    <div className={`flex flex-col ${embedded ? "h-full" : "h-screen"} text-gray-100 relative`} style={{ background: embedded ? "transparent" : "linear-gradient(135deg, #0f1a1c 0%, #0d1f2d 100%)" }} suppressHydrationWarning>
       {/* Header */}
       {!embedded && <header className="border-b border-gray-800 px-6 py-4 flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-xl font-bold">P</div>
@@ -273,13 +294,13 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
+      <div ref={messagesRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overflow-x-hidden px-3 md:px-4 py-6 space-y-4 relative">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             {msg.role === "assistant" && (
               <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold mr-2 mt-1 flex-shrink-0">P</div>
             )}
-            <div className={`max-w-[85vw] md:max-w-2xl rounded-2xl px-4 py-3 text-sm ${
+            <div className={`max-w-[75vw] md:max-w-2xl rounded-2xl px-3 md:px-4 py-3 text-sm break-words overflow-hidden ${
               msg.role === "user" ? "bg-blue-600 text-white rounded-br-sm" : "bg-gray-800 text-gray-100 rounded-bl-sm"
             }`}>
               {msg.loading ? (
@@ -391,6 +412,19 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
         ))}
         <div ref={bottomRef} />
       </div>
+
+      {/* Scroll to bottom button */}
+      {showScrollBtn && (
+        <div className="absolute bottom-24 right-4 z-10">
+          <button
+            onClick={scrollToBottom}
+            className="bg-blue-600 hover:bg-blue-500 text-white rounded-full w-10 h-10 flex items-center justify-center shadow-lg transition-colors"
+            aria-label="Scroll dolů"
+          >
+            ↓
+          </button>
+        </div>
+      )}
 
       {/* Suggested queries */}
       {messages.length === 1 && (
