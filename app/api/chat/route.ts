@@ -70,6 +70,8 @@ DŮLEŽITÉ:
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
 - Když nemovitost má chybějící data (rok výstavby, rekonstrukce), VŽDY zavolej enrich_property tool.
 - Máš přístup k internetu přes web_search tool (Brave Search). Použij ho kdykoli potřebuješ aktuální data — nové inzeráty, ceny, kontakty, novinky.
+- Po přečtení emailu se schůzkou VŽDY zavolej add_dashboard_note s detaily (kdo, kdy, o čem).
+- Po naplánování každé události v kalendáři VŽDY zavolej add_dashboard_note s poznámkou.
 - Když uživatel chce vědět jak si stojíme vs. konkurence nebo jaká je tržní cena v lokalitě, zavolej competitive_intelligence tool.
 
 LEAD SCORING pravidla:
@@ -264,6 +266,20 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "add_dashboard_note",
+    description: "Přidá poznámku/záznam na dashboard. Použij VŽDY když: přečteš email se schůzkou, naplánuješ událost, zjistíš důležitou informaci. Typ: 'schuzka', 'email', 'info', 'upozorneni'.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        nadpis: { type: "string", description: "Krátký nadpis poznámky" },
+        obsah: { type: "string", description: "Detail — kdo, kdy, o čem" },
+        typ: { type: "string", description: "schuzka | email | info | upozorneni" },
+        zdroj: { type: "string", description: "Odkud info pochází (email, chat, ...)" },
+      },
+      required: ["nadpis"],
+    },
+  },
+  {
     name: "read_emails",
     description: "Přečte emaily z AgentMail inboxu. Použij když uživatel chce přečíst emaily, zjistit požadavky, zpracovat schůzky z emailů nebo stáhnout přílohy.",
     input_schema: {
@@ -386,7 +402,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {
@@ -539,6 +555,19 @@ export async function POST(req: NextRequest) {
                 const msg = addResult.error ? `Chyba: ${addResult.error}` : `Schůzka přidána! ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}: "${parsed.popis}"`;
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: msg });
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
+              } else if (tool.name === "add_dashboard_note") {
+                const { nadpis, obsah, typ = "info", zdroj } = parsed;
+                try {
+                  const notesBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                  await fetch(`${notesBaseUrl}/api/poznamky`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ nadpis, obsah, typ, zdroj }),
+                  });
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Poznámka "${nadpis}" přidána na dashboard.` });
+                } catch {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Chyba při ukládání poznámky." });
+                }
               } else if (tool.name === "read_emails") {
                 const { limit = 10 } = parsed;
                 const AGENTMAIL_KEY = "am_us_5470aed899ab47715f9a150e06e4e579b90eca41997a43da38055f8d2d1c7b9d";

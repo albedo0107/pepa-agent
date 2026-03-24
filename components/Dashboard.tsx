@@ -15,6 +15,15 @@ type DashboardData = {
   prodeje: { mesic: string; obrat: number }[];
 };
 
+type DashboardNote = {
+  id: number;
+  typ: string;
+  nadpis: string;
+  obsah: string;
+  zdroj: string;
+  created_at: string;
+};
+
 type FollowUpLead = {
   id: number;
   jmeno: string;
@@ -45,16 +54,19 @@ function formatDate(d: string) {
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [followUps, setFollowUps] = useState<FollowUpLead[]>([]);
+  const [notes, setNotes] = useState<DashboardNote[]>([]);
   const [calRefresh, setCalRefresh] = useState(0);
   const [mobileTab, setMobileTab] = useState<"dashboard" | "chat">("dashboard");
 
   useEffect(() => {
     fetch("/api/dashboard").then(r => r.json()).then(setData).catch(() => {});
     fetch("/api/followup").then(r => r.json()).then(setFollowUps).catch(() => {});
+    fetch("/api/poznamky").then(r => r.json()).then(setNotes).catch(() => {});
     const interval = setInterval(() => {
       fetch("/api/dashboard").then(r => r.json()).then(setData).catch(() => {});
       fetch("/api/followup").then(r => r.json()).then(setFollowUps).catch(() => {});
-    }, 60000);
+      fetch("/api/poznamky").then(r => r.json()).then(setNotes).catch(() => {});
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -141,6 +153,36 @@ export default function Dashboard() {
               {followUps.length > 5 && (
                 <div className="text-xs text-center text-gray-500">+{followUps.length - 5} dalších leadů</div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Interní poznámky */}
+        {notes.length > 0 && (
+          <div className="rounded-xl p-3 border border-purple-700/50" style={{ background: "rgba(139,92,246,0.06)" }}>
+            <h3 className="text-sm font-semibold text-purple-300 mb-2 flex items-center gap-2">
+              📝 Interní poznámky
+              <span className="ml-auto text-xs text-purple-400/70">{notes.length} záznamů</span>
+            </h3>
+            <div className="space-y-2">
+              {notes.slice(0, 5).map((n) => (
+                <div key={n.id} className="text-xs p-2 rounded-lg bg-purple-900/20 border border-purple-800/30">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                      n.typ === "schuzka" ? "bg-blue-600/80 text-white" :
+                      n.typ === "upozorneni" ? "bg-red-600/80 text-white" :
+                      n.typ === "email" ? "bg-green-600/80 text-white" :
+                      "bg-gray-600/80 text-white"
+                    }`}>
+                      {n.typ === "schuzka" ? "📅" : n.typ === "email" ? "📧" : n.typ === "upozorneni" ? "⚠️" : "ℹ️"} {n.typ}
+                    </span>
+                    <span className="text-gray-500 ml-auto">{new Date(n.created_at).toLocaleDateString("cs-CZ", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                  <div className="font-medium text-gray-200">{n.nadpis}</div>
+                  {n.obsah && <div className="text-gray-400 mt-0.5 line-clamp-2">{n.obsah}</div>}
+                </div>
+              ))}
+              {notes.length > 5 && <div className="text-xs text-center text-gray-500">+{notes.length - 5} dalších</div>}
             </div>
           </div>
         )}
