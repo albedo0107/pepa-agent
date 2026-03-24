@@ -64,7 +64,7 @@ Příští týden: ${new Date(Date.now() + 7 * 86400000).toISOString().split("T"
 DŮLEŽITÉ:
 - Volej sql_query MAX 1x na dotaz — zahrň vše do jednoho dotazu.
 - Nikdy neopakuj "Perfektní!", "Výborně!" apod. před každou akcí. Jen jednou na začátku max.
-- Když chceš přidat událost do kalendáře, VŽDY použij calendar_add_event tool — ten zapíše do DB i do Google Calendar automaticky. NIKDY nepoužívej open_calendar_event (ten jen otevírá browser).
+- Máš PLNÝ přístup k Google Calendar uživatele. OAuth token je uložen v DB (tabulka oauth_tokens). Když chceš přidat událost, použij calendar_add_event — ten zapíše do DB i do Google Calendar přes /api/gcal/event endpoint. NIKDY nepoužívej open_calendar_event.
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
