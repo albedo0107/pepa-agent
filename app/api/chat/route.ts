@@ -66,7 +66,12 @@ Příští týden: ${new Date(Date.now() + 7 * 86400000).toISOString().split("T"
 DŮLEŽITÉ:
 - Volej sql_query MAX 1x na dotaz — zahrň vše do jednoho dotazu.
 - Nikdy neopakuj "Perfektní!", "Výborně!" apod. před každou akcí. Jen jednou na začátku max.
-- Máš PLNÝ přístup k Google Calendar uživatele přes OAuth. Použij calendar_add_event pro přidání a calendar_delete_event pro mazání. Píšeš PŘÍMO do Google Calendar. Pro čtení/hledání volných termínů VŽDY použij calendar_find_slot — ten čte přímo z Google Calendar API. NIKDY nepoužívej sql_query na tabulku kalendar pro kalendářové operace.
+- Máš PLNÝ přístup k Google Calendar přes OAuth. Nástroje:
+  * calendar_list_events — načte události z Google Calendar (s jejich ID). VŽDY použij před mazáním.
+  * calendar_add_event — přidá událost přímo do Google Calendar
+  * calendar_delete_event — smaže událost podle gcal_event_id (získej ho z calendar_list_events)
+  * calendar_find_slot — najde volný termín v Google Calendar
+  NIKDY nepoužívej sql_query pro kalendářové operace. NIKDY neodkazuj na interní databázi kalendáře.
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
@@ -178,15 +183,27 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
-    name: "calendar_delete_event",
-    description: "Smaže událost z kalendáře (DB i Google Calendar). Použij když uživatel chce smazat schůzku.",
+    name: "calendar_list_events",
+    description: "Načte seznam událostí z Google Calendar pro dané datum nebo rozsah. Vrátí názvy, časy a Google Calendar ID. VŽDY použij před mazáním události.",
     input_schema: {
       type: "object" as const,
       properties: {
-        id: { type: "number", description: "ID události v DB (z sql_query)" },
-        gcal_event_id: { type: "string", description: "Google Calendar event ID (volitelné)" },
+        from: { type: "string", description: "Od data (YYYY-MM-DD)" },
+        to: { type: "string", description: "Do data (YYYY-MM-DD), volitelné" },
       },
-      required: ["id"],
+      required: ["from"],
+    },
+  },
+  {
+    name: "calendar_delete_event",
+    description: "Smaže událost z Google Calendar podle Google Calendar event ID (získej ho přes calendar_list_events).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        gcal_event_id: { type: "string", description: "Google Calendar event ID (z calendar_list_events)" },
+        nazev: { type: "string", description: "Název události (pro potvrzení)" },
+      },
+      required: ["gcal_event_id"],
     },
   },
   {
@@ -399,7 +416,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", calendar_delete_event: "🗑️ Mažu událost...", open_gmail_draft: "✉️ Připravuji email draft...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", calendar_delete_event: "🗑️ Mažu událost...", calendar_list_events: "📅 Načítám události z kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily...", add_dashboard_note: "📝 Zapisuji poznámku..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {
@@ -563,6 +580,33 @@ export async function POST(req: NextRequest) {
                 } catch (e: unknown) {
                   toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba čtení kalendáře: ${e instanceof Error ? e.message : String(e)}` });
                 }
+              } else if (tool.name === "calendar_list_events") {
+                const { from, to } = parsed;
+                const toDate = to || from;
+                try {
+                  const gcR = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider='google_calendar'`;
+                  const tk = await fetch("https://oauth2.googleapis.com/token", {
+                    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: new URLSearchParams({ refresh_token: gcR[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
+                  }).then(r => r.json());
+                  const evs = await fetch(
+                    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(from+"T00:00:00+01:00")}&timeMax=${encodeURIComponent(toDate+"T23:59:59+01:00")}&singleEvents=true&orderBy=startTime&maxResults=50`,
+                    { headers: { Authorization: `Bearer ${tk.access_token}` } }
+                  ).then(r => r.json());
+                  const items = evs.items || [];
+                  if (!items.length) {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Žádné události ${from}–${toDate}.` });
+                  } else {
+                    const list = items.map((e: Record<string,unknown>) => {
+                      const s = (e.start as Record<string,string>)?.dateTime || (e.start as Record<string,string>)?.date || "";
+                      const en = (e.end as Record<string,string>)?.dateTime || "";
+                      return `ID: ${e.id} | ${s.slice(0,10)} ${s.slice(11,16)}–${en.slice(11,16)} | ${e.summary}`;
+                    }).join("\n");
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Události ${from}–${toDate}:\n${list}` });
+                  }
+                } catch (e: unknown) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e instanceof Error ? e.message : String(e)}` });
+                }
               } else if (tool.name === "calendar_delete_event") {
                 const { id, gcal_event_id } = parsed;
                 // Smaž z DB
@@ -575,7 +619,7 @@ export async function POST(req: NextRequest) {
                     headers: { "Content-Type": "application/x-www-form-urlencoded" },
                     body: new URLSearchParams({ refresh_token: rows[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
                   }).then(r => r.json());
-                  const eventId = gcal_event_id || id;
+                  const eventId = gcal_event_id;
                   await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(String(eventId))}`, {
                     method: "DELETE", headers: { "Authorization": `Bearer ${tokenRes.access_token}` },
                   });
