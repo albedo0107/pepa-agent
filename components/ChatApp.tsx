@@ -157,11 +157,8 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
         setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${json.error || "neznámá chyba"}` }]);
         return;
       }
-      const { name, sizeFmt, content } = json;
-      const msg = content
-        ? `Nahrál jsem soubor: **${name}** (${sizeFmt})\n\nObsah:\n\`\`\`\n${content}\n\`\`\`\n\nZpracuj tento soubor — importuj data, vyhodnoť leady, ulož do DB.`
-        : `Nahrál jsem soubor: **${name}** (${sizeFmt}) — binární soubor, nelze přečíst přímo. Nahraj CSV nebo TXT.`;
-      await sendMessage(msg);
+      const { name, sizeFmt } = json;
+      await sendMessage(`Soubor **${name}** (${sizeFmt}) byl uložen na disk do složky /var/pepa-files/uploads/. Chceš s ním něco udělat?`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "neznámá chyba";
       setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${msg}` }]);
