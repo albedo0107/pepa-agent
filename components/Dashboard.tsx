@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import ChatApp from "./ChatApp";
 import dynamic from "next/dynamic";
-import { Users, Home, TrendingUp, DollarSign, Activity, Calendar, LayoutDashboard, MessageSquare, Bell } from "lucide-react";
+import { Activity, LayoutDashboard, MessageSquare, Bell } from "lucide-react";
 const ChartRenderer = dynamic(() => import("./ChartRenderer"), { ssr: false });
 const WeekCalendar = dynamic(() => import("./WeekCalendar"), { ssr: false });
 
@@ -187,47 +187,8 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Nejbližší termíny */}
-        <div className="rounded-xl p-3 border border-gray-700/50" style={{ background: "rgba(255,255,255,0.03)" }}>
-          <h3 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2"><Calendar size={14} className="text-blue-400" /> Nejbližší termíny</h3>
-          {data.kalendar.length === 0 ? (
-            <p className="text-xs text-gray-500">Žádné termíny</p>
-          ) : (
-            <div className="space-y-2">
-              {data.kalendar.map((k, i) => (
-                <div key={i} className={`flex items-center gap-2 text-xs p-2 rounded-lg ${k.obsazeno ? "bg-blue-900/40 border border-blue-800" : "bg-gray-800"}`}>
-                  <div className="text-blue-400 font-medium w-16 flex-shrink-0">{formatDate(k.datum)}</div>
-                  <div className="text-gray-400 w-20 flex-shrink-0">{k.cas_od?.slice(0,5)}–{k.cas_do?.slice(0,5)}</div>
-                  <div className="text-gray-300 truncate flex-1">{(k as unknown as {popis: string}).popis || "Schůzka"}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
         {/* Týdenní kalendář */}
         <WeekCalendar refresh={calRefresh} />
-
-        {/* Poslední klienti */}
-        <div className="bg-gray-900 rounded-xl p-3 border border-gray-800">
-          <h3 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2"><Users size={14} className="text-blue-400" /> Nejnovější klienti</h3>
-          <div className="space-y-2">
-            {data.klienti.map((k, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs">
-                <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold flex-shrink-0">
-                  {k.jmeno[0]}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium truncate">{k.jmeno}</div>
-                  <div className="text-gray-500 truncate">{k.email}</div>
-                </div>
-                <div className={`px-2 py-0.5 rounded-full text-xs ${ZDROJ_COLORS[k.zdroj] || "bg-gray-600"} bg-opacity-20 text-gray-300 flex-shrink-0`}>
-                  {k.zdroj}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
 
       </div>
