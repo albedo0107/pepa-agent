@@ -67,6 +67,7 @@ DŮLEŽITÉ:
 - Když najdeš volný termín v kalendáři, VŽDY ihned zavolej open_calendar_event tool.
 - Když píšeš email, VŽDY zavolej open_gmail_draft tool.
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
+- Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
 
 LEAD SCORING pravidla:
 - Zdroj "doporučení" = +30 bodů (nejvyšší konverze)
@@ -178,6 +179,24 @@ const tools: Anthropic.Tool[] = [
         duration_minutes: { type: "number", description: "Délka schůzky v minutách" },
       },
       required: ["from"],
+    },
+  },
+  {
+    name: "smart_calendar_orchestrate",
+    description: "Smart Calendar Orchestration — najde nejlepší volný slot pro schůzku s více účastníky, respektuje buffer časy mezi schůzkami a kontroluje konflikty. Použij když uživatel chce naplánovat schůzku s klientem nebo více lidmi.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ucastnici: { type: "array", items: { type: "string" }, description: "Jména účastníků (klienti, kolegové)" },
+        from: { type: "string", description: "Hledat od data (YYYY-MM-DD)" },
+        to: { type: "string", description: "Hledat do data (YYYY-MM-DD)" },
+        duration_minutes: { type: "number", description: "Délka schůzky v minutách (default 60)" },
+        buffer_minutes: { type: "number", description: "Buffer čas před/po schůzce v minutách (default 15)" },
+        preferred_hours: { type: "string", description: "Preferovaný čas např. '9:00-17:00'" },
+        typ: { type: "string", description: "Typ: schůzka, prohlídka" },
+        poznamka: { type: "string", description: "Název/popis schůzky" },
+      },
+      required: ["from", "duration_minutes"],
     },
   },
   {
@@ -302,7 +321,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument...", calendar_find_slot: "📅 Hledám volný čas...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {
@@ -387,6 +406,62 @@ export async function POST(req: NextRequest) {
                 const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(parsed.to)}&su=${encodeURIComponent(parsed.subject)}&body=${encodeURIComponent(parsed.body)}`;
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ gmailDraft: { url: gmailUrl, to: parsed.to, subject: parsed.subject, preview: parsed.body.slice(0, 150) } })}\n\n`));
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Gmail draft připraven. Uživatel může kliknout pro otevření v Gmailu.` });
+              } else if (tool.name === "smart_calendar_orchestrate") {
+                const { ucastnici = [], from, to, duration_minutes = 60, buffer_minutes = 15, preferred_hours = "9:00-17:00", typ = "schůzka", poznamka } = parsed;
+                const toDate = to || new Date(new Date(from).getTime() + 7 * 86400000).toISOString().split("T")[0];
+                const [prefStart, prefEnd] = preferred_hours.split("-").map((t: string) => t.trim());
+                const [prefStartH, prefStartM] = prefStart.split(":").map(Number);
+                const [prefEndH, prefEndM] = prefEnd.split(":").map(Number);
+                const prefStartMin = prefStartH * 60 + (prefStartM || 0);
+                const prefEndMin = prefEndH * 60 + (prefEndM || 0);
+
+                // Načti obsazené sloty
+                const existingRaw = await sql`
+                  SELECT datum::text, cas_od, cas_do, popis, klient_jmeno
+                  FROM kalendar
+                  WHERE datum >= ${from} AND datum <= ${toDate} AND obsazeno = true
+                  ORDER BY datum, cas_od
+                `;
+
+                // Najdi volné sloty s bufferem
+                const suggestions: { datum: string; cas_od: string; cas_do: string; conflicts: string[] }[] = [];
+                const current = new Date(from);
+                const end = new Date(toDate);
+
+                while (current <= end && suggestions.length < 5) {
+                  const iso = current.toISOString().split("T")[0];
+                  const dayEvents = existingRaw.filter((e: Record<string, unknown>) => e.datum === iso);
+
+                  // Generuj kandidáty po 30 min
+                  for (let startMin = prefStartMin; startMin + duration_minutes <= prefEndMin; startMin += 30) {
+                    const endMin = startMin + duration_minutes;
+                    const bufferedStart = startMin - buffer_minutes;
+                    const bufferedEnd = endMin + buffer_minutes;
+
+                    const toHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+                    // Zkontroluj konflikty (s bufferem)
+                    const conflicts = dayEvents.filter((e: Record<string, unknown>) => {
+                      const eStart = (e.cas_od as string).split(":").slice(0, 2).map(Number).reduce((h: number, m: number, i: number) => i === 0 ? h * 60 + m : h + m, 0);
+                      const eEnd = (e.cas_do as string).split(":").slice(0, 2).map(Number).reduce((h: number, m: number, i: number) => i === 0 ? h * 60 + m : h + m, 0);
+                      return bufferedStart < eEnd && bufferedEnd > eStart;
+                    }).map((e: Record<string, unknown>) => `${e.cas_od}–${e.cas_do} ${e.popis || ""}`);
+
+                    if (conflicts.length === 0) {
+                      suggestions.push({ datum: iso, cas_od: toHHMM(startMin), cas_do: toHHMM(endMin), conflicts: [] });
+                      break; // jeden slot na den
+                    }
+                  }
+                  current.setDate(current.getDate() + 1);
+                }
+
+                const suggestionText = suggestions.length > 0
+                  ? suggestions.map((s, i) => `${i + 1}. ${s.datum} ${s.cas_od}–${s.cas_do} (buffer ${buffer_minutes}min před/po)`).join("\n")
+                  : "Žádný volný slot nenalezen v daném rozsahu.";
+
+                const ucastniciText = ucastnici.length > 0 ? `\nÚčastníci: ${ucastnici.join(", ")}` : "";
+                const result = `Smart Calendar Orchestration výsledek:\n${ucastniciText}\nDélka: ${duration_minutes} min, buffer: ${buffer_minutes} min, preferovaný čas: ${preferred_hours}\n\nDoporučené sloty:\n${suggestionText}\n\nTyp: ${typ}${poznamka ? `, popis: ${poznamka}` : ""}\n\nNabídni uživateli výběr a po potvrzení zavolej calendar_add_event.`;
+                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: result });
               } else if (tool.name === "calendar_find_slot") {
                 const { from, to, duration_minutes = 60 } = parsed;
                 const toDate = to || new Date(new Date(from).getTime() + 5 * 86400000).toISOString().split("T")[0];
