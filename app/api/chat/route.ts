@@ -548,12 +548,27 @@ export async function POST(req: NextRequest) {
                 }
               } else if (tool.name === "competitive_intelligence") {
                 const { lokalita, typ, dispozice, nase_cena } = parsed;
-                // Scrapy Sreality search URL pro informaci (jen URL, ne skutečný scraping)
-                const searchQuery = encodeURIComponent(`${typ || "byt"} ${dispozice || ""} ${lokalita} prodej`);
-                const srealityUrl = `https://www.sreality.cz/hledani/prodej/${typ === "dům" ? "domy" : "byty"}?region=${encodeURIComponent(lokalita)}`;
-                const bezrealitkyUrl = `https://www.bezrealitky.cz/vyhledat?offerType=PRODEJ&estateType=${typ === "dům" ? "RD" : "BYT"}&query=${encodeURIComponent(lokalita)}`;
+                const BRAVE_KEY = process.env.BRAVE_API_KEY;
 
-                // Porovnej s našimi nemovitostmi ve stejné lokalitě
+                // Brave Search — skutečné výsledky z trhu
+                let braveResults = "";
+                if (BRAVE_KEY) {
+                  const query = `${typ || "byt"} ${dispozice || ""} prodej ${lokalita} cena Kč site:sreality.cz OR site:bezrealitky.cz`;
+                  try {
+                    const braveRes = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8&country=cz&search_lang=cs`, {
+                      headers: { "Accept": "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": BRAVE_KEY },
+                    }).then(r => r.json());
+                    const results = braveRes?.web?.results || [];
+                    if (results.length > 0) {
+                      braveResults = "\n🔍 Aktuální nabídky na trhu (Brave Search):\n";
+                      results.slice(0, 6).forEach((r: Record<string, unknown>) => {
+                        braveResults += `- ${r.title}\n  ${r.description || ""}\n  ${r.url}\n`;
+                      });
+                    }
+                  } catch { braveResults = ""; }
+                }
+
+                // Naše nemovitosti ve stejné lokalitě
                 const naseNem = await sql`
                   SELECT nazev, dispozice, cena_kc, plocha_m2, stav,
                     CASE WHEN plocha_m2 > 0 THEN ROUND(cena_kc::numeric / plocha_m2) ELSE 0 END as cena_m2
@@ -563,31 +578,8 @@ export async function POST(req: NextRequest) {
                   LIMIT 10
                 `;
 
-                // Průměrné ceny dle typu v Praze (benchmark data)
-                const benchmarks: Record<string, Record<string, number>> = {
-                  "vinohrady": { "2+1": 95000, "3+1": 110000, "4+1": 120000 },
-                  "žižkov": { "2+1": 80000, "3+1": 90000, "4+1": 100000 },
-                  "holešovice": { "2+1": 85000, "3+1": 95000, "4+1": 105000 },
-                  "karlín": { "2+1": 100000, "3+1": 115000, "4+1": 125000 },
-                  "smíchov": { "2+1": 90000, "3+1": 100000, "4+1": 110000 },
-                  "default": { "2+1": 85000, "3+1": 98000, "4+1": 108000 },
-                };
-                const locKey = Object.keys(benchmarks).find(k => lokalita.toLowerCase().includes(k)) || "default";
-                const dispKey = dispozice || "3+1";
-                const trhCenaM2 = benchmarks[locKey][dispKey] || benchmarks["default"]["3+1"];
-
-                let report = `Competitive Intelligence — ${lokalita} (${typ || "byt"} ${dispozice || ""})\n\n`;
-                report += `📊 Tržní benchmark:\n- Průměrná cena/m²: ${trhCenaM2.toLocaleString("cs-CZ")} Kč\n`;
-
-                if (nase_cena && naseNem.length > 0) {
-                  const naseCenaM2 = naseNem[0].plocha_m2 > 0 ? Math.round(nase_cena / Number(naseNem[0].plocha_m2)) : 0;
-                  const diff = naseCenaM2 - trhCenaM2;
-                  const diffPct = Math.round((diff / trhCenaM2) * 100);
-                  report += `- Naše cena/m²: ${naseCenaM2.toLocaleString("cs-CZ")} Kč (${diff > 0 ? "+" : ""}${diffPct}% vs. trh)\n`;
-                  report += diff > 10000 ? `⚠️ Doporučení: Snížit cenu — jsme nad trhem o ${diffPct}%\n` :
-                            diff < -10000 ? `✅ Doporučení: Cena je výhodná — jsme pod trhem o ${Math.abs(diffPct)}%\n` :
-                            `✅ Doporučení: Cena odpovídá trhu\n`;
-                }
+                let report = `Competitive Intelligence — ${lokalita} (${typ || "byt"} ${dispozice || ""})\n`;
+                if (nase_cena) report += `Naše cena k porovnání: ${Number(nase_cena).toLocaleString("cs-CZ")} Kč\n`;
 
                 if (naseNem.length > 0) {
                   report += `\n🏠 Naše nabídky v lokalitě:\n`;
@@ -596,7 +588,8 @@ export async function POST(req: NextRequest) {
                   });
                 }
 
-                report += `\n🔗 Sledovat konkurenci:\n- Sreality: ${srealityUrl}\n- Bezrealitky: ${bezrealitkyUrl}\n- Google: https://www.google.com/search?q=${searchQuery}`;
+                report += braveResults;
+                report += `\n🔗 Přímé vyhledávání:\n- https://www.sreality.cz/hledani/prodej/${typ === "dům" ? "domy" : "byty"}?region=${encodeURIComponent(lokalita)}\n- https://www.bezrealitky.cz/vyhledat?offerType=PRODEJ&query=${encodeURIComponent(lokalita)}`;
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: report });
               } else if (tool.name === "create_document") {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ document: parsed })}\n\n`));
