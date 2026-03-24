@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { neon } from "@neondatabase/serverless";
 
+export const maxDuration = 60; // Vercel Pro: 60s timeout
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const sql = neon(process.env.DATABASE_URL!);
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
