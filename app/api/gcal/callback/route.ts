@@ -7,9 +7,7 @@ export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   if (!code) return NextResponse.json({ error: "Chybí code" }, { status: 400 });
 
-  const redirectUri = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}/api/gcal/callback`
-    : "http://localhost:3000/api/gcal/callback";
+  const redirectUri = "https://pepa-agent.vercel.app/api/gcal/callback";
 
   // Vyměň code za tokeny
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
