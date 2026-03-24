@@ -146,19 +146,32 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbys7cHeej0mo7sYmxuL60NAKkGpTVO-zUeZ2vHT5u0vigwPA-7zlsuxkcJ78ABf8_H4/exec";
+
   const uploadFile = useCallback(async (file: File) => {
     setUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
     try {
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const json = await res.json();
-      if (!res.ok || json.error) {
-        setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${json.error || "neznámá chyba"}` }]);
-        return;
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      const body = new URLSearchParams();
+      body.set("name", file.name);
+      body.set("type", file.type || "application/octet-stream");
+      body.set("data", base64);
+
+      const res = await fetch(APPS_SCRIPT_URL, { method: "POST", body });
+      const text = await res.text();
+      let json: { ok?: boolean };
+      try { json = JSON.parse(text); } catch { json = {}; }
+
+      const sizeFmt = file.size > 1024 * 1024
+        ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
+        : `${Math.round(file.size / 1024)} KB`;
+
+      if (json.ok) {
+        await sendMessage(`Soubor **${file.name}** (${sizeFmt}) byl uložen do Google Drive. Chceš s ním něco udělat?`);
+      } else {
+        setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${text.slice(0, 100)}` }]);
       }
-      const { name, sizeFmt } = json;
-      await sendMessage(`Soubor **${name}** (${sizeFmt}) byl uložen do Google Drive složky. Chceš s ním něco udělat?`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "neznámá chyba";
       setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${msg}` }]);
