@@ -220,11 +220,11 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "create_document",
-    description: "Vytvoří dokument ke stažení. Formáty: 'docx' (Word, ideální pro reporty a přehledy), 'pptx' (prezentace, použij slides pole), 'pdf' (HTML report). Pro datové přehledy a reporty VŽDY používej 'docx'.",
+    description: "Vytvoří dokument ke stažení. Formáty: 'docx' (Word, ideální pro reporty a přehledy), 'pptx' (prezentace, použij slides pole), 'pdf' (HTML report), 'xlsx' (Excel tabulka — použij pro export dat, seznamy klientů/leadů/nemovitostí). Pro datové přehledy a reporty VŽDY používej 'docx' nebo 'xlsx'.",
     input_schema: {
       type: "object" as const,
       properties: {
-        format: { type: "string", enum: ["pdf", "docx", "pptx"] },
+        format: { type: "string", enum: ["pdf", "docx", "pptx", "xlsx"] },
         title: { type: "string" },
         content: { type: "string", description: "Obsah pro PDF/DOCX" },
         data: {
@@ -356,7 +356,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {

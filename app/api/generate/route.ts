@@ -149,5 +149,38 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  if (format === "xlsx") {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+
+    if (data?.headers && data?.rows) {
+      // Tabulková data
+      const wsData = [data.headers, ...data.rows];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      // Styling — tučné záhlaví
+      data.headers.forEach((_: string, i: number) => {
+        const cell = ws[XLSX.utils.encode_cell({ r: 0, c: i })];
+        if (cell) cell.s = { font: { bold: true }, fill: { fgColor: { rgb: "2563EB" } } };
+      });
+      XLSX.utils.book_append_sheet(wb, ws, title.slice(0, 31));
+    } else if (content) {
+      // Textový obsah → převeď řádky na buňky
+      const lines = content.split("\n").filter((l: string) => l.trim());
+      const wsData = lines.map((line: string) => [line.replace(/\*\*(.*?)\*\*/g, "$1").trim()]);
+      const ws = XLSX.utils.aoa_to_sheet([[title], [""], ...wsData]);
+      XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    } else {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[title]]), "Sheet1");
+    }
+
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    return new NextResponse(buf, {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(title)}.xlsx"`,
+      },
+    });
+  }
+
   return NextResponse.json({ error: "Nepodporovaný formát" }, { status: 400 });
 }
