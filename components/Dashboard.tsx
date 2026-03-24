@@ -111,22 +111,6 @@ export default function Dashboard() {
           </span>
         </div>
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { label: "Klientů", value: data.kpi.klienti, Icon: Users, color: "#3b82f6" },
-            { label: "K prodeji", value: data.kpi.k_prodeji, Icon: Home, color: "#10b981" },
-            { label: "Leady (30d)", value: data.kpi.leady_30d, Icon: TrendingUp, color: "#8b5cf6" },
-            { label: "Obrat měsíc", value: formatCZK(data.kpi.obrat_mesic), Icon: DollarSign, color: "#f59e0b" },
-          ].map(k => (
-            <div key={k.label} className="rounded-xl p-3 border border-gray-700/50" style={{ background: "rgba(255,255,255,0.04)" }}>
-              <k.Icon size={18} className="mb-1" style={{ color: k.color }} />
-              <div className="text-xl font-bold">{k.value}</div>
-              <div className="text-xs text-gray-400">{k.label}</div>
-            </div>
-          ))}
-        </div>
-
         {/* Follow-up alert */}
         {followUps.length > 0 && (
           <div className="rounded-xl p-3 border border-orange-700/50" style={{ background: "rgba(251,146,60,0.06)" }}>
