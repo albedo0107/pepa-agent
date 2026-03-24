@@ -87,6 +87,7 @@ DB tabulky:
 - leady (id, jmeno, email, zdroj, datum, nemovitost_id, stav)
 - prodeje (id, nemovitost_id, klient_id, datum_prodeje, cena_prodeje, provize_kc)
 - kalendar (id, datum, cas_od, cas_do, typ, popis, obsazeno)
+- soubory (id, nazev, typ, velikost, obsah TEXT, obsah_base64, nahrano_at) — nahrané soubory uživatelem; obsah = text/CSV, obsah_base64 = binární soubory
 
 Google Drive firemní složka: ${DRIVE_FOLDER}
 Soubory v Drive:

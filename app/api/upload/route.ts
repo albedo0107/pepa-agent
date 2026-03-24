@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { neon } from "@neondatabase/serverless";
+
+const sql = neon(process.env.DATABASE_URL!);
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,24 +13,36 @@ export async function POST(req: NextRequest) {
       ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
       : `${Math.round(file.size / 1024)} KB`;
 
-    // Přečti obsah souboru přímo
     const isText = file.type.includes("text") || file.type.includes("csv") ||
       file.type.includes("json") || file.name.endsWith(".csv") ||
-      file.name.endsWith(".txt") || file.name.endsWith(".json");
+      file.name.endsWith(".txt") || file.name.endsWith(".json") ||
+      file.name.endsWith(".md");
 
-    let content: string | null = null;
-    if (isText && file.size < 500 * 1024) {
-      content = await file.text();
-      // Limit na 10k znaků
-      if (content.length > 10000) content = content.slice(0, 10000) + "\n... (zkráceno)";
+    let obsah: string | null = null;
+    let obsah_base64: string | null = null;
+
+    if (isText && file.size < 1024 * 1024) {
+      obsah = await file.text();
+    } else {
+      // Binární soubory — uložit jako base64
+      const buffer = await file.arrayBuffer();
+      obsah_base64 = Buffer.from(buffer).toString("base64");
     }
 
+    // Ulož do DB
+    const result = await sql`
+      INSERT INTO soubory (nazev, typ, velikost, obsah, obsah_base64)
+      VALUES (${file.name}, ${file.type}, ${file.size}, ${obsah}, ${obsah_base64})
+      RETURNING id, nahrano_at
+    `;
+
     return NextResponse.json({
+      id: result[0].id,
       name: file.name,
-      size: file.size,
       sizeFmt,
       type: file.type,
-      content,
+      saved: true,
+      content: obsah ? (obsah.length > 10000 ? obsah.slice(0, 10000) + "\n...(zkráceno)" : obsah) : null,
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
