@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import ChatApp from "./ChatApp";
 import dynamic from "next/dynamic";
-import { Users, Home, TrendingUp, DollarSign, Activity, Calendar, LayoutDashboard, MessageSquare } from "lucide-react";
+import { Users, Home, TrendingUp, DollarSign, Activity, Calendar, LayoutDashboard, MessageSquare, Bell } from "lucide-react";
 const ChartRenderer = dynamic(() => import("./ChartRenderer"), { ssr: false });
 const WeekCalendar = dynamic(() => import("./WeekCalendar"), { ssr: false });
 
@@ -13,6 +13,17 @@ type DashboardData = {
   kalendar: { datum: string; cas_od: string; cas_do: string; popis: string; obsazeno: boolean }[];
   leady: { mesic: string; pocet: number }[];
   prodeje: { mesic: string; obrat: number }[];
+};
+
+type FollowUpLead = {
+  id: number;
+  jmeno: string;
+  email: string;
+  stav: string;
+  priorita: string;
+  skore: number;
+  posledni: string;
+  dnu_bez_kontaktu: number;
 };
 
 const ZDROJ_COLORS: Record<string, string> = {
@@ -33,14 +44,17 @@ function formatDate(d: string) {
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [followUps, setFollowUps] = useState<FollowUpLead[]>([]);
   const [calRefresh, setCalRefresh] = useState(0);
   const [mobileTab, setMobileTab] = useState<"dashboard" | "chat">("dashboard");
 
   useEffect(() => {
     fetch("/api/dashboard").then(r => r.json()).then(setData).catch(() => {});
+    fetch("/api/followup").then(r => r.json()).then(setFollowUps).catch(() => {});
     const interval = setInterval(() => {
       fetch("/api/dashboard").then(r => r.json()).then(setData).catch(() => {});
-    }, 30000);
+      fetch("/api/followup").then(r => r.json()).then(setFollowUps).catch(() => {});
+    }, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -112,6 +126,40 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+
+        {/* Follow-up alert */}
+        {followUps.length > 0 && (
+          <div className="rounded-xl p-3 border border-orange-700/50" style={{ background: "rgba(251,146,60,0.06)" }}>
+            <h3 className="text-sm font-semibold text-orange-300 mb-2 flex items-center gap-2">
+              <Bell size={14} className="text-orange-400" />
+              Follow-up ({followUps.length})
+              <span className="ml-auto text-xs text-orange-400/70">čekají na kontakt</span>
+            </h3>
+            <div className="space-y-2">
+              {followUps.slice(0, 5).map((l) => (
+                <div key={l.id} className="flex items-center gap-2 text-xs p-2 rounded-lg bg-orange-900/20 border border-orange-800/30">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-200 truncate">{l.jmeno}</div>
+                    {l.email && <div className="text-gray-500 truncate">{l.email}</div>}
+                  </div>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                      l.priorita === "vysoká" ? "bg-red-600/80 text-white" :
+                      l.priorita === "střední" ? "bg-yellow-600/80 text-white" :
+                      "bg-gray-600/80 text-white"
+                    }`}>
+                      {l.priorita === "vysoká" ? "🔴" : l.priorita === "střední" ? "🟡" : "🟢"} {l.priorita}
+                    </span>
+                    <span className="text-orange-400/80">{l.dnu_bez_kontaktu}d bez kontaktu</span>
+                  </div>
+                </div>
+              ))}
+              {followUps.length > 5 && (
+                <div className="text-xs text-center text-gray-500">+{followUps.length - 5} dalších leadů</div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Nejbližší termíny */}
         <div className="rounded-xl p-3 border border-gray-700/50" style={{ background: "rgba(255,255,255,0.03)" }}>
