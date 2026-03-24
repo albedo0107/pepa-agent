@@ -152,11 +152,17 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
     formData.append("file", file);
     try {
       const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const { url, name, size } = await res.json();
+      const json = await res.json();
+      if (!res.ok || json.error) {
+        setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${json.error || "neznámá chyba"}` }]);
+        return;
+      }
+      const { url, name, size } = json;
       const sizeFmt = size > 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.round(size / 1024)} KB`;
       await sendMessage(`Nahrál jsem soubor: **${name}** (${sizeFmt})\nURL: ${url}\n\nMůžeš tento soubor zpracovat?`);
-    } catch {
-      setMessages(prev => [...prev, { role: "assistant", content: "❌ Chyba při nahrávání souboru." }]);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "neznámá chyba";
+      setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${msg}` }]);
     } finally {
       setUploading(false);
     }
