@@ -158,7 +158,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
         return;
       }
       const { name, sizeFmt } = json;
-      await sendMessage(`Soubor **${name}** (${sizeFmt}) byl uložen na disk do složky /var/pepa-files/uploads/. Chceš s ním něco udělat?`);
+      await sendMessage(`Soubor **${name}** (${sizeFmt}) byl uložen do Google Drive složky. Chceš s ním něco udělat?`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "neznámá chyba";
       setMessages(prev => [...prev, { role: "assistant", content: `❌ Chyba při nahrávání: ${msg}` }]);
