@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   try {
     const token = await getAccessToken();
     const res = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${from}T00:00:00+01:00&timeMax=${to}T23:59:59+01:00&singleEvents=true&orderBy=startTime&maxResults=50`,
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(from+"T00:00:00+01:00")}&timeMax=${encodeURIComponent(to+"T23:59:59+01:00")}&singleEvents=true&orderBy=startTime&maxResults=50`,
       { headers: { Authorization: `Bearer ${token}` } }
     ).then(r => r.json());
 
