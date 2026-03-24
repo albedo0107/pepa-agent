@@ -696,7 +696,31 @@ export async function POST(req: NextRequest) {
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: report });
               } else if (tool.name === "create_document") {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ document: parsed })}\n\n`));
-                toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Dokument připraven ke stažení." });
+                // Automatický upload do Google Drive pokud je to PDF nebo DOCX
+                if (parsed.format === "pdf" || parsed.format === "docx" || parsed.format === "xlsx") {
+                  try {
+                    const docBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                    const genRes = await fetch(`${docBaseUrl}/api/generate`, {
+                      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
+                    });
+                    const contentType = genRes.headers.get("content-type") || "";
+                    const buf = await genRes.arrayBuffer();
+                    const base64 = Buffer.from(buf).toString("base64");
+                    const ext = parsed.format === "pdf" ? "html" : parsed.format;
+                    const filename = `${parsed.title || "dokument"}.${ext}`;
+                    const APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbys7cHeej0mo7sYmxuL60NAKkGpTVO-zUeZ2vHT5u0vigwPA-7zlsuxkcJ78ABf8_H4/exec";
+                    const body = new URLSearchParams();
+                    body.set("name", filename);
+                    body.set("type", contentType.split(";")[0]);
+                    body.set("data", base64);
+                    await fetch(APPS_SCRIPT, { method: "POST", body, redirect: "follow" });
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Dokument "${filename}" připraven ke stažení a nahrán do Google Drive.` });
+                  } catch {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Dokument připraven ke stažení (upload do Drive selhal)." });
+                  }
+                } else {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Dokument připraven ke stažení." });
+                }
               }
             } catch {}
           }
