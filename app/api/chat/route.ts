@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { neon } from "@neondatabase/serverless";
 
-export const maxDuration = 60; // Vercel Pro: 60s timeout
+export const maxDuration = 60;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const sql = neon(process.env.DATABASE_URL!);
@@ -393,7 +393,7 @@ export async function POST(req: NextRequest) {
         { role: "user", content: message },
       ];
 
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 8; i++) {
         // Použij streaming pro finální odpověď
         const streamResp = client.messages.stream({
           model: "claude-sonnet-4-5",
@@ -835,7 +835,11 @@ export async function POST(req: NextRequest) {
                   toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Dokument připraven ke stažení." });
                 }
               }
-            } catch {}
+            } catch (toolErr: unknown) {
+              const errMsg = toolErr instanceof Error ? toolErr.message : String(toolErr);
+              console.error(`Tool ${tool.name} error:`, errMsg);
+              toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba nástroje ${tool.name}: ${errMsg}` });
+            }
           }
 
           if (toolResults.length > 0) {
