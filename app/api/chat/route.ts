@@ -69,6 +69,7 @@ DŮLEŽITÉ:
 - Při importu nebo přidání nového leadu VŽDY zavolej score_lead tool.
 - Když uživatel chce naplánovat schůzku s klientem nebo více lidmi, VŽDY použij smart_calendar_orchestrate tool (ne calendar_find_slot). Tento tool automaticky respektuje buffer časy a kontroluje konflikty.
 - Když nemovitost má chybějící data (rok výstavby, rekonstrukce), VŽDY zavolej enrich_property tool.
+- Máš přístup k internetu přes web_search tool (Brave Search). Použij ho kdykoli potřebuješ aktuální data — nové inzeráty, ceny, kontakty, novinky.
 - Když uživatel chce vědět jak si stojíme vs. konkurence nebo jaká je tržní cena v lokalitě, zavolej competitive_intelligence tool.
 
 LEAD SCORING pravidla:
@@ -88,6 +89,11 @@ DB tabulky:
 - prodeje (id, nemovitost_id, klient_id, datum_prodeje, cena_prodeje, provize_kc)
 - kalendar (id, datum, cas_od, cas_do, typ, popis, obsazeno)
 - soubory (id, nazev, typ, velikost, obsah TEXT, obsah_base64, nahrano_at) — nahrané soubory uživatelem; obsah = text/CSV, obsah_base64 = binární soubory
+- obchodnici (id, jmeno, email, telefon) — 5 obchodníků firmy
+- kalendar.mistnost — zasedací místnost pro událost (hlavní: "Zasedací místnost Vojty Žižky")
+
+AgentMail inbox: albedo_ai_agnet@agentmail.to — přes read_emails tool.
+Při čtení emailů: detekuj schůzky, termíny a požadavky → naplánuj přes smart_calendar_orchestrate → zkontroluj konflikt místnosti.
 
 Google Drive firemní složka: ${DRIVE_FOLDER}
 Soubory v Drive:
@@ -214,6 +220,7 @@ const tools: Anthropic.Tool[] = [
         popis: { type: "string", description: "Název/popis události" },
         klient_jmeno: { type: "string", description: "Jméno klienta (volitelné)" },
         typ: { type: "string", description: "Typ: schůzka, prohlídka, blokováno" },
+        mistnost: { type: "string", description: "Zasedací místnost (např. 'Zasedací místnost Vojty Žižky')" },
       },
       required: ["datum", "cas_od", "cas_do", "popis"],
     },
@@ -257,6 +264,17 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "read_emails",
+    description: "Přečte emaily z AgentMail inboxu. Použij když uživatel chce přečíst emaily, zjistit požadavky, zpracovat schůzky z emailů nebo stáhnout přílohy.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        limit: { type: "number", description: "Počet emailů (default 10)" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "enrich_property",
     description: "Data Enrichment — doplní chybějící data o nemovitosti (rok výstavby, rekonstrukce, stavební úpravy) z veřejných zdrojů nebo odhadem na základě lokality, dispozice a ceny. Použij když nemovitost má NULL hodnoty v těchto polích.",
     input_schema: {
@@ -272,6 +290,18 @@ const tools: Anthropic.Tool[] = [
         plocha_m2: { type: "number", description: "Plocha v m²" },
       },
       required: ["nemovitost_id"],
+    },
+  },
+  {
+    name: "web_search",
+    description: "Vyhledá aktuální informace na internetu přes Brave Search. Použij pro: nové inzeráty nemovitostí, aktuální ceny, novinky z trhu, kontaktní údaje firem, cokoliv co vyžaduje aktuální data z webu.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "Vyhledávací dotaz" },
+        count: { type: "number", description: "Počet výsledků (default 8, max 10)" },
+      },
+      required: ["query"],
     },
   },
   {
@@ -356,7 +386,7 @@ export async function POST(req: NextRequest) {
             currentToolIdx = toolCalls.length - 1;
             const name = event.content_block.name;
             // Pošli jako indikátor (ne jako text odpovědi)
-            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky..." };
+            const indicators: Record<string, string> = { sql_query: "🔍 Dotazuji databázi...", create_chart: "📊 Generuji graf...", create_document: "📄 Připravuji dokument/Excel...", calendar_find_slot: "📅 Hledám volný čas...", smart_calendar_orchestrate: "🗓️ Orchestruji kalendář účastníků...", calendar_add_event: "📅 Přidávám do kalendáře...", open_gmail_draft: "✉️ Připravuji email draft...", open_calendar_event: "📅 Připravuji kalendářovou událost...", enrich_property: "🏠 Doplňuji data nemovitosti...", competitive_intelligence: "📊 Analyzuji konkurenční nabídky...", web_search: "🌐 Vyhledávám na internetu...", read_emails: "📧 Čtu emaily..." };
             if (indicators[name]) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ indicator: indicators[name] })}\n\n`));
           }
           if (event.type === "content_block_delta") {
@@ -509,6 +539,26 @@ export async function POST(req: NextRequest) {
                 const msg = addResult.error ? `Chyba: ${addResult.error}` : `Schůzka přidána! ${parsed.datum} ${parsed.cas_od}–${parsed.cas_do}: "${parsed.popis}"`;
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: msg });
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
+              } else if (tool.name === "read_emails") {
+                const { limit = 10 } = parsed;
+                const AGENTMAIL_KEY = "am_us_5470aed899ab47715f9a150e06e4e579b90eca41997a43da38055f8d2d1c7b9d";
+                const INBOX = "albedo_ai_agnet@agentmail.to";
+                try {
+                  const res = await fetch(`https://api.agentmail.to/v0/inboxes/${INBOX}/messages?limit=${limit}`, {
+                    headers: { "Authorization": `Bearer ${AGENTMAIL_KEY}` },
+                  }).then(r => r.json());
+                  const messages = res.messages || res || [];
+                  if (!messages.length) {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Inbox je prázdný." });
+                  } else {
+                    const text = messages.map((m: Record<string, unknown>, i: number) =>
+                      `${i + 1}. Od: ${m.from || "?"} | Předmět: ${m.subject || "(bez předmětu)"} | ${m.date || m.created_at || ""}\n   ${String(m.text || m.body || "").slice(0, 300)}`
+                    ).join("\n\n");
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Emaily v inboxu (${messages.length}):\n\n${text}\n\nPokud emaily obsahují schůzky, použij smart_calendar_orchestrate pro naplánování bez konfliktů.` });
+                  }
+                } catch (e: unknown) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba čtení emailů: ${e instanceof Error ? e.message : String(e)}` });
+                }
               } else if (tool.name === "enrich_property") {
                 const { nemovitost_id, adresa, lokalita, typ, dispozice, cena_kc, plocha_m2 } = parsed;
                 // Načti aktuální data z DB
@@ -546,6 +596,29 @@ export async function POST(req: NextRequest) {
                     WHERE id = ${nemovitost_id}`;
 
                   toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Data Enrichment dokončen pro nemovitost ID ${nemovitost_id} (${prop.nazev}):\n- Rok výstavby: ${enriched.rok_vystavby}\n- Rekonstrukce: ${enriched.rekonstrukce_rok || "N/A"} — ${enriched.rekonstrukce_popis}\n- Stavební úpravy: ${enriched.stavebni_upravy}\nData uložena do DB.` });
+                }
+              } else if (tool.name === "web_search") {
+                const { query, count = 8 } = parsed;
+                const BRAVE_KEY = process.env.BRAVE_API_KEY;
+                if (!BRAVE_KEY) {
+                  toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Brave API key není nastaven." });
+                } else {
+                  try {
+                    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=cz&search_lang=cs`, {
+                      headers: { "Accept": "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": BRAVE_KEY },
+                    }).then(r => r.json());
+                    const results = res?.web?.results || [];
+                    if (results.length === 0) {
+                      toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: "Žádné výsledky." });
+                    } else {
+                      const text = results.map((r: Record<string, unknown>, i: number) =>
+                        `${i + 1}. ${r.title}\n   ${r.description || ""}\n   ${r.url}`
+                      ).join("\n\n");
+                      toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Výsledky pro "${query}":\n\n${text}` });
+                    }
+                  } catch (e: unknown) {
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba vyhledávání: ${e instanceof Error ? e.message : String(e)}` });
+                  }
                 }
               } else if (tool.name === "competitive_intelligence") {
                 const { lokalita, typ, dispozice, nase_cena } = parsed;
