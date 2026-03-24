@@ -54,6 +54,16 @@ type Message = {
   leadScore?: LeadScore;
 };
 
+function sanitizeMessage(text: string): string {
+  // Odstraň [[reply_to_current]] a [[reply_to:...]] tagy
+  text = text.replace(/\[\[\s*reply_to[^\]]*\]\]\s*/gi, "");
+  // Odstraň JSON metadata bloky (sender metadata z Telegramu)
+  text = text.replace(/^json\s*\{[\s\S]*?\}\s*/gm, "");
+  // Odstraň osamocené { } bloky na začátku
+  text = text.replace(/^\s*\{[\s\S]*?\}\s*\n/gm, "");
+  return text.trim();
+}
+
 const WELCOME_MSG: Message = {
   role: "assistant",
   content: "Ahoj! Jsem **Pepa**, váš AI back office operations agent 👊\n\nMůžu vám pomoci s:\n- Dotazy nad firemními daty (klienti, nemovitosti, leady)\n- Hledáním chybějících dat\n- Přehledem prodejů a aktivit\n- Dostupností termínů prohlídek\n\nNa co se chcete zeptat?",
@@ -90,7 +100,9 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
     fetch("/api/history")
       .then((r) => r.json())
       .then(({ messages: saved }) => {
-        if (Array.isArray(saved) && saved.length > 0) setMessages(saved);
+        if (Array.isArray(saved) && saved.length > 0) {
+          setMessages(saved.map((m: Message) => ({ ...m, content: sanitizeMessage(m.content) })));
+        }
       })
       .catch(() => {});
   }, []);
@@ -281,7 +293,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate }: { embedd
                   {msg.indicator && !msg.content && (
                     <span className="text-gray-400 text-xs italic animate-pulse">{msg.indicator}</span>
                   )}
-                  {msg.content && <span dangerouslySetInnerHTML={{ __html: renderContent(msg.content) }} />}
+                  {msg.content && <span dangerouslySetInnerHTML={{ __html: renderContent(sanitizeMessage(msg.content)) }} />}
                   {msg.leadScore && (
                     <div className="mt-2 rounded-lg border border-yellow-700/50 bg-yellow-900/10 p-3 space-y-1.5">
                       <div className="flex items-center gap-2">
