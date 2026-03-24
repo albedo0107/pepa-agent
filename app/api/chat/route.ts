@@ -396,7 +396,7 @@ export async function POST(req: NextRequest) {
       for (let i = 0; i < 3; i++) {
         // Použij streaming pro finální odpověď
         const streamResp = client.messages.stream({
-          model: "claude-3-5-haiku-20241022",
+          model: "claude-sonnet-4-5",
           max_tokens: 8192,
           system: SYSTEM_PROMPT_BASE,
           tools,
@@ -860,3 +860,4 @@ export async function POST(req: NextRequest) {
     },
   });
 }
+
