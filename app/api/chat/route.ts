@@ -438,9 +438,7 @@ export async function POST(req: NextRequest) {
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Lead #${lead_id} ohodnocen: ${skore}/100, ${priorita} priorita. ${result}` });
               } else if (tool.name === "read_drive_document") {
                 try {
-                  const baseUrl = process.env.VERCEL_URL
-                    ? `https://${process.env.VERCEL_URL}`
-                    : "http://localhost:3000";
+                  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
                   const res = await fetch(`${baseUrl}/api/drive/read`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -538,7 +536,7 @@ export async function POST(req: NextRequest) {
                 // Smaž z Google Calendar
                 let gcalDelMsg = "";
                 try {
-                  const calBase = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                  const calBase = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
                   // Získej gcal_event_id z DB pokud není předán
                   let eventId = gcal_event_id;
                   if (!eventId) {
@@ -553,7 +551,7 @@ export async function POST(req: NextRequest) {
                 toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Událost ID ${id} smazána z DB${gcalDelMsg}.` });
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ calendarUpdate: true })}\n\n`));
               } else if (tool.name === "calendar_add_event") {
-                const calBase = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                const calBase = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
                 const addResult = await fetch(`${calBase}/api/calendar`, {
                   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
                 }).then(r => r.json()).catch(() => ({ error: "Chyba" }));
@@ -577,7 +575,7 @@ export async function POST(req: NextRequest) {
               } else if (tool.name === "add_dashboard_note") {
                 const { nadpis, obsah, typ = "info", zdroj } = parsed;
                 try {
-                  const notesBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                  const notesBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
                   await fetch(`${notesBaseUrl}/api/poznamky`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -718,7 +716,7 @@ export async function POST(req: NextRequest) {
                 // Automatický upload do Google Drive pokud je to PDF nebo DOCX
                 if (parsed.format === "pdf" || parsed.format === "docx" || parsed.format === "xlsx") {
                   try {
-                    const docBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+                    const docBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
                     const genRes = await fetch(`${docBaseUrl}/api/generate`, {
                       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed),
                     });
