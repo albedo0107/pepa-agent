@@ -184,14 +184,15 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "calendar_list_events",
-    description: "Načte seznam událostí z Google Calendar pro dané datum nebo rozsah. Vrátí názvy, časy a Google Calendar ID. VŽDY použij před mazáním události.",
+    description: "Načte seznam událostí z Google Calendar. Vrátí názvy, časy a Google Calendar ID. VŽDY použij před mazáním. Pokud uživatel řekne 'poslední 3 týdny' nastav from=3 týdny zpět, pro 'příští rok' nastav to=rok dopředu.",
     input_schema: {
       type: "object" as const,
       properties: {
-        from: { type: "string", description: "Od data (YYYY-MM-DD)" },
-        to: { type: "string", description: "Do data (YYYY-MM-DD), volitelné" },
+        from: { type: "string", description: "Od data (YYYY-MM-DD). Default: 3 týdny zpět." },
+        to: { type: "string", description: "Do data (YYYY-MM-DD). Default: 1 rok dopředu." },
+        max_results: { type: "number", description: "Max počet výsledků (default 100, max 500)" },
       },
-      required: ["from"],
+      required: [],
     },
   },
   {
@@ -581,8 +582,12 @@ export async function POST(req: NextRequest) {
                   toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba čtení kalendáře: ${e instanceof Error ? e.message : String(e)}` });
                 }
               } else if (tool.name === "calendar_list_events") {
-                const { from, to } = parsed;
-                const toDate = to || from;
+                const now = new Date();
+                const defaultFrom = new Date(now.getTime() - 21 * 86400000).toISOString().split("T")[0];
+                const defaultTo = new Date(now.getTime() + 365 * 86400000).toISOString().split("T")[0];
+                const fromDate = parsed.from || defaultFrom;
+                const toDate = parsed.to || defaultTo;
+                const maxResults = Math.min(parsed.max_results || 100, 500);
                 try {
                   const gcR = await sql`SELECT refresh_token FROM oauth_tokens WHERE provider='google_calendar'`;
                   const tk = await fetch("https://oauth2.googleapis.com/token", {
@@ -590,19 +595,19 @@ export async function POST(req: NextRequest) {
                     body: new URLSearchParams({ refresh_token: gcR[0].refresh_token, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, grant_type: "refresh_token" }),
                   }).then(r => r.json());
                   const evs = await fetch(
-                    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(from+"T00:00:00+01:00")}&timeMax=${encodeURIComponent(toDate+"T23:59:59+01:00")}&singleEvents=true&orderBy=startTime&maxResults=50`,
+                    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(fromDate+"T00:00:00+01:00")}&timeMax=${encodeURIComponent(toDate+"T23:59:59+01:00")}&singleEvents=true&orderBy=startTime&maxResults=${maxResults}`,
                     { headers: { Authorization: `Bearer ${tk.access_token}` } }
                   ).then(r => r.json());
                   const items = evs.items || [];
                   if (!items.length) {
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Žádné události ${from}–${toDate}.` });
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Žádné události ${fromDate}–${toDate}.` });
                   } else {
                     const list = items.map((e: Record<string,unknown>) => {
                       const s = (e.start as Record<string,string>)?.dateTime || (e.start as Record<string,string>)?.date || "";
-                      const en = (e.end as Record<string,string>)?.dateTime || "";
-                      return `ID: ${e.id} | ${s.slice(0,10)} ${s.slice(11,16)}–${en.slice(11,16)} | ${e.summary}`;
+                      const en = (e.end as Record<string,string>)?.dateTime || (e.end as Record<string,string>)?.date || "";
+                      return `ID: ${e.id} | ${s.slice(0,10)} ${s.length>10 ? s.slice(11,16) : ""}–${en.length>10 ? en.slice(11,16) : ""} | ${e.summary}`;
                     }).join("\n");
-                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Události ${from}–${toDate}:\n${list}` });
+                    toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Události ${fromDate}–${toDate} (${items.length}):\n${list}` });
                   }
                 } catch (e: unknown) {
                   toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: `Chyba: ${e instanceof Error ? e.message : String(e)}` });
