@@ -26,12 +26,12 @@ type DashboardNote = {
 
 type FollowUpLead = {
   id: number;
-  datum: string;
-  cas_od: string;
-  cas_do: string;
-  typ: string;
-  klient_jmeno: string;
-  popis: string;
+  jmeno: string;
+  email: string;
+  stav: string;
+  priorita: string;
+  posledni: string;
+  dnu_bez_kontaktu: number;
 };
 
 const ZDROJ_COLORS: Record<string, string> = {
@@ -122,34 +122,33 @@ export default function Dashboard() {
           </span>
         </div>
 
-        {/* Nadcházející schůzky z kalendáře */}
+        {/* Kritické follow-upy */}
         {followUps.length > 0 && (
-          <div className="rounded-xl p-3 border border-blue-700/50" style={{ background: "rgba(59,130,246,0.06)" }}>
-            <h3 className="text-sm font-semibold text-blue-300 mb-2 flex items-center gap-2">
-              <Bell size={14} className="text-blue-400" />
-              Nadcházející schůzky ({followUps.length})
-              <span className="ml-auto text-xs text-blue-400/70">příštích 7 dní</span>
+          <div className="rounded-xl p-3 border border-orange-700/50" style={{ background: "rgba(251,146,60,0.06)" }}>
+            <h3 className="text-sm font-semibold text-orange-300 mb-2 flex items-center gap-2">
+              <Bell size={14} className="text-orange-400" />
+              Kritické follow-upy ({followUps.length})
+              <span className="ml-auto text-xs text-orange-400/70">4+ dní bez kontaktu</span>
             </h3>
             <div className="space-y-2">
-              {followUps.slice(0, 6).map((e) => {
-                const isToday = e.datum === new Date().toISOString().slice(0, 10);
-                const dateFmt = isToday ? "Dnes" : new Date(e.datum).toLocaleDateString("cs-CZ", { weekday: "short", day: "numeric", month: "short" });
-                return (
-                  <div key={e.id} className="flex items-center gap-2 text-xs p-2 rounded-lg bg-blue-900/20 border border-blue-800/30">
-                    <div className="flex-shrink-0 text-center min-w-[42px]">
-                      <div className={`font-bold ${isToday ? "text-blue-300" : "text-gray-400"}`}>{dateFmt}</div>
-                      <div className="text-gray-500">{e.cas_od.slice(0, 5)}</div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-200 truncate">{e.popis || e.typ}</div>
-                      {e.klient_jmeno && <div className="text-gray-500 truncate">👤 {e.klient_jmeno}</div>}
-                    </div>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-blue-800/40 text-blue-300 flex-shrink-0">
-                      {e.cas_od.slice(0, 5)}–{e.cas_do.slice(0, 5)}
-                    </span>
+              {followUps.slice(0, 6).map((l) => (
+                <div key={l.id} className="flex items-center gap-2 text-xs p-2 rounded-lg bg-orange-900/20 border border-orange-800/30">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-gray-200 truncate">{l.jmeno}</div>
+                    {l.email && <div className="text-gray-500 truncate">{l.email}</div>}
                   </div>
-                );
-              })}
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                      l.dnu_bez_kontaktu >= 14 ? "bg-red-600/80 text-white" :
+                      l.dnu_bez_kontaktu >= 7 ? "bg-orange-600/80 text-white" :
+                      "bg-yellow-600/80 text-white"
+                    }`}>
+                      {l.dnu_bez_kontaktu}d
+                    </span>
+                    <span className="text-gray-500 text-xs">{l.stav}</span>
+                  </div>
+                </div>
+              ))}
               {followUps.length > 6 && (
                 <div className="text-xs text-center text-gray-500">+{followUps.length - 6} dalších</div>
               )}
