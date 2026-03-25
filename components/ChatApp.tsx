@@ -93,6 +93,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -109,11 +110,13 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
           setMessages(saved.map((m: Message) => ({ ...m, content: sanitizeMessage(m.content) })));
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setHistoryLoaded(true));
   }, []);
 
-  // Ulož historii do DB
+  // Ulož historii do DB — až po načtení (aby initial state nepřepsal DB)
   useEffect(() => {
+    if (!historyLoaded) return;
     if (messages.length > 1 && !messages.some((m) => m.loading)) {
       fetch("/api/history", {
         method: "POST",
@@ -121,7 +124,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
         body: JSON.stringify({ messages }),
       }).catch(() => {});
     }
-  }, [messages]);
+  }, [messages, historyLoaded]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
