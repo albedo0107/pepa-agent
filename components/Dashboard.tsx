@@ -59,11 +59,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetch("/api/dashboard").then(r => r.json()).then(setData).catch(() => {});
-    fetch("/api/followup").then(r => r.json()).then(setFollowUps).catch(() => {});
+    fetch(`/api/followup?t=${Date.now()}`, { cache: "no-store" }).then(r => r.json()).then(setFollowUps).catch(() => {});
     fetch("/api/poznamky").then(r => r.json()).then(setNotes).catch(() => {});
     const interval = setInterval(() => {
       fetch("/api/dashboard").then(r => r.json()).then(setData).catch(() => {});
-      fetch("/api/followup").then(r => r.json()).then(setFollowUps).catch(() => {});
+      fetch(`/api/followup?t=${Date.now()}`, { cache: "no-store" }).then(r => r.json()).then(setFollowUps).catch(() => {});
       fetch("/api/poznamky").then(r => r.json()).then(setNotes).catch(() => {});
     }, 30000);
     return () => clearInterval(interval);
