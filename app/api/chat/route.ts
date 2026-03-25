@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // VPS proxy endpoint
 const PEPA_BACKEND = process.env.PEPA_BACKEND_URL || "http://178.104.111.69/pepa-chat";
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, history }),
-      signal: AbortSignal.timeout(58000),
+      signal: AbortSignal.timeout(290000),
     });
 
     const data = await backendRes.json();
