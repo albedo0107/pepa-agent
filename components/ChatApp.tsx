@@ -98,6 +98,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const typewriterRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Extras se aplikují na poslední zprávu po [DONE]
   const extrasRef = useRef<Partial<Message>>({});
 
@@ -209,6 +210,7 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
   const sendMessage = async (text?: string) => {
     const msg = text || input.trim();
     if (!msg || loading) return;
+    if (typewriterRef.current) { clearInterval(typewriterRef.current); typewriterRef.current = null; }
     setInput("");
     setLoading(true);
 
@@ -259,12 +261,25 @@ export default function ChatApp({ embedded = false, onCalendarUpdate, scrollOnMo
             const parsed = JSON.parse(data);
             if (parsed.text) {
               fullText += parsed.text;
-              // Průběžný streaming update
-              setMessages((prev) => prev.map((m, i) =>
-                i === prev.length - 1
-                  ? { ...m, loading: false, content: fullText, indicator: undefined }
-                  : m
-              ));
+              // Typewriter efekt — odkrývej text znak po znaku
+              if (typewriterRef.current) clearInterval(typewriterRef.current);
+              let displayed = "";
+              const target = fullText;
+              let i = 0;
+              typewriterRef.current = setInterval(() => {
+                const chunkSize = Math.max(1, Math.floor(target.length / 80));
+                i = Math.min(i + chunkSize, target.length);
+                displayed = target.slice(0, i);
+                setMessages((prev) => prev.map((m, idx) =>
+                  idx === prev.length - 1
+                    ? { ...m, loading: false, content: displayed, indicator: undefined }
+                    : m
+                ));
+                if (i >= target.length && typewriterRef.current) {
+                  clearInterval(typewriterRef.current);
+                  typewriterRef.current = null;
+                }
+              }, 16);
             } else if (parsed.chart) localExtras = { ...localExtras, chart: parsed.chart };
             else if (parsed.document) localExtras = { ...localExtras, document: parsed.document };
             else if (parsed.leadScore) localExtras = { ...localExtras, leadScore: parsed.leadScore };
