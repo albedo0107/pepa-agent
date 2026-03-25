@@ -17,5 +17,10 @@ export async function GET() {
     ORDER BY dnu_bez_kontaktu DESC
     LIMIT 8
   `;
-  return NextResponse.json(rows);
+  return NextResponse.json(rows, {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "Pragma": "no-cache",
+    },
+  });
 }
