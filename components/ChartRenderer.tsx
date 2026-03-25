@@ -4,7 +4,7 @@ import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  RadialBarChart, RadialBar,
+  RadialBarChart, RadialBar, PieLabelRenderProps,
 } from "recharts";
 
 type ChartData = {
@@ -33,15 +33,17 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
   );
 };
 
-const CustomPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, name, percent }: {cx: number; cy: number; midAngle: number; innerRadius: number; outerRadius: number; name: string; percent: number}) => {
+const CustomPieLabel = (props: PieLabelRenderProps) => {
+  const { cx, cy, midAngle, innerRadius, outerRadius, name, percent } = props;
+  if (!cx || !cy || !midAngle || !innerRadius || !outerRadius || !percent) return null;
   const RADIAN = Math.PI / 180;
-  const radius = innerRadius + (outerRadius - innerRadius) * 1.4;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  if (percent < 0.05) return null;
+  const radius = Number(innerRadius) + (Number(outerRadius) - Number(innerRadius)) * 1.4;
+  const x = Number(cx) + radius * Math.cos(-Number(midAngle) * RADIAN);
+  const y = Number(cy) + radius * Math.sin(-Number(midAngle) * RADIAN);
+  if (Number(percent) < 0.05) return null;
   return (
-    <text x={x} y={y} fill="#d1d5db" textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" fontSize={11}>
-      {name} ({(percent * 100).toFixed(0)}%)
+    <text x={x} y={y} fill="#d1d5db" textAnchor={x > Number(cx) ? "start" : "end"} dominantBaseline="central" fontSize={11}>
+      {String(name)} ({(Number(percent) * 100).toFixed(0)}%)
     </text>
   );
 };
